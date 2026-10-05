@@ -10,23 +10,25 @@ if __name__ == "__main__":
     iphone_both = 'images/iPhone16/RAW_and_HEIC/IMG_6980'
 
     print(f"Sony alpha 7s II:")
+    cam = 'sony'
     # analyze.bayer_mosaic(sony)
     # analyze.metadata(sony)
     # analyze.metadata(sony_ordinary)
     # sony_raw_img, sony_raw_name = analyze._open_image(f'{sony_both}.ARW')
     # sony_jpg_img, sony_jpg_name = analyze._open_image(f'{sony_both}.JPG')
-    # analyze.zoomed_way_in(sony_raw_img, sony_jpg_img, sony_raw_name)
-    # analyze.calibrate_camera('images/a7sii/a7sii_calibration/')
-    # analyze.calibrate_camera('images/a7sii/test/')
+    # analyze.zoomed_way_in(sony_raw_img, sony_jpg_img, sony_raw_name, camera=cam)
+    # analyze.calibrate_camera('images/a7sii/a7sii_calibration/', camera=cam)
+    # analyze.calibrate_camera('images/a7sii/test/', camera=cam)
 
     print(f"------------------")
 
     print(f"iPhone 16 Pro Max:")
+    cam = 'iphone'
     # analyze.bayer_mosaic(iphone)
     # analyze.metadata(iphone)
     # analyze.metadata(iphone_ordinary)
-    iphone_raw_img, iphone_raw_name = analyze._open_image(f'{iphone_both}.DNG')
-    iphone_heic_img, iphone_heic_name = analyze._open_image(f'{iphone_both}.HEIC')
-    analyze.zoomed_way_in(iphone_raw_img, iphone_heic_img, iphone_raw_name)
-    # analyze.calibrate_camera('images/iPhone16/iphone16_calibration/')
-    # analyze.calibrate_camera('images/iPhone16/test/')
+    # iphone_raw_img, iphone_raw_name = analyze._open_image(f'{iphone_both}.DNG')
+    # iphone_heic_img, iphone_heic_name = analyze._open_image(f'{iphone_both}.HEIC')
+    # analyze.zoomed_way_in(iphone_raw_img, iphone_heic_img, iphone_raw_name, camera=cam)
+    analyze.calibrate_camera('images/iPhone16/iphone16_calibration/', camera=cam)
+    # analyze.calibrate_camera('images/iPhone16/test/', camera=cam)

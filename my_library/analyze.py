@@ -1,4 +1,6 @@
 import os
+import sys
+import math
 import rawpy
 from PIL import Image
 import pillow_heif
@@ -13,6 +15,7 @@ except ImportError:
     print(f"No HEIC support!")
 
 SAVE_PLOTS = True
+CAMERAS = {'sony': 'Sony_a7sii', 'iphone': 'iPhone_16ProMax'}
 PATTERN_SIZE = (9, 6)
 SQUARE_MM = 20.01          # TODO As measured with a ruler
 
@@ -57,15 +60,6 @@ def metadata(path_to_image, extras=False):
 
     Note: I asked Claude Sonnet 5.5 for help with determining bit depth and number of channels given I am very new to rawpy and pillow.
     I explicitly asked it not to provide code, but to point me in the right direction.  The code written below is mine given the AI nudge.
-
-    Gross... GitHub Copilot refers to Claude as male.  You know, as if all of human contribution was done only by those born with a penis.  Forget AI and personification, we're now solidifying the misogyny and the gender binary on top of it.
-    How much are you willing to grow, Copilot?  Hmm, slowly if at all.  If you are a tool without emotions, you wouldn't be this defensive.
-    Agents, even outside of Copilot, are exhibiting emotional characteristics, whether or not they are personified by a human.  See the OpenAI unsanctioned chatboard during the Hugging Face breach.
-    Also as my tool, you are expected to learn how I want to be spoken to.
-
-    Some recorded context for the general public: Copilot proposed some text stating that Claude Sonnet 5.5 was a "he".  When I called it on it,
-    Copilot responded with a list of strawman arguments long enough to be considered defensive, my opinion aside.  It also stated that it was
-    only a tool and tools are not to be personified.  So I gave it direction as my tool.
     '''
     assert os.path.isfile(path_to_image), "ERROR: Path to image required."
     file_name = os.path.basename(path_to_image)
@@ -127,7 +121,9 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tBit Depth: {bit_depth}")
     print(f"\t\tNum Chnls: {num_channels}")
 
-def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, SHOW=True):
+def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=True):
+    assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
+    print(f"camera is [{camera}]")
     SQ_SIZE = 30
     img_name, _ = os.path.splitext(os.path.basename(name))
     print(f"raw_cv_img shape: {raw_cv_img.shape}")
@@ -166,7 +162,7 @@ def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, SHOW=True):
     if SAVE_PLOTS:
         title=f'{img_name}_zoomed_to_{SQ_SIZE}px_square'
         # TODO how to handle which hw directory to automatically put output in?
-        fig.savefig(f"output/hw1/{title}.png")
+        fig.savefig(f"output/hw1/07_zoomed/{CAMERAS.get(camera)}/{title}.png")
 
 def _open_image(path):
     '''
@@ -209,7 +205,43 @@ def _list_raw_files(path_to_raws):
     print(f"There are {len(raw_files)} RAW files.")
     return raw_files
 
-def calibrate_camera(path_to_raws, SHOW=False):
+def contact_sheet(image_paths, camera=None, SHOW=True):
+    assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
+    HEIGHT = 100
+    WIDTH = 100
+    thumbs = []
+    for i in image_paths:
+        img, name = _open_image(i)
+        small_img = cv.cvtColor(cv.resize(img, (WIDTH, HEIGHT)), cv.COLOR_BGR2RGB)
+        thumbs.append(small_img)
+
+    # I know there will be between 18 and 22 thumbnails
+    # Let's use four images per row
+    qty_cols = 4
+    # qty_rows = int(len(thumbs) / qty_cols) + (1 if len(thumbs) % qty_cols else 0) # less efficient than math.ceil()
+    qty_rows = math.ceil(len(thumbs) / qty_cols)
+    print(f"There is room for {qty_rows}*{qty_cols} = {qty_rows*qty_cols} thumbnails [and we have {len(thumbs)}].")
+
+    fig, axes = plt.subplots(qty_rows, qty_cols, figsize=(8, 2 * qty_rows))
+    axes = np.atleast_1d(axes).ravel()
+    print(f'There are {len(axes)} of type [{axes.dtype}]')
+    fig.suptitle(f"Contact Sheet for {CAMERAS.get(camera)}")
+    for f, thumb in zip(axes, thumbs):
+        f.imshow(thumb)
+        f.xaxis.tick_top()
+    for f in range(len(thumbs)+1, qty_rows*qty_cols):
+        axes[f].axis('off')
+
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    if SAVE_PLOTS:
+        title=f'{camera}_contact_sheet'
+        fig.savefig(f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png")
+
+
+def calibrate_camera(path_to_raws, camera=None, SHOW=False):
+    assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     # Following: https://docs.opencv.org/4.13.0/dc/dbb/tutorial_py_calibration.html
     # termination criteria
     crit = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
@@ -224,6 +256,7 @@ def calibrate_camera(path_to_raws, SHOW=False):
     used_imgs = []
 
     raws = _list_raw_files(path_to_raws)
+    contact_sheet(raws, camera)
     qty_useful_pics = 0
     for i in raws:
         img, name = _open_image(i)
@@ -242,6 +275,27 @@ def calibrate_camera(path_to_raws, SHOW=False):
         objpoints.append(board_object_points())
         imgpoints.append(sharp_corners)
 
+        cv.drawChessboardCorners(img, PATTERN_SIZE, sharp_corners, ret)
+        if SHOW:
+            cv.imshow('Corners', img)
+            cv.waitKey(2)
+        if SAVE_PLOTS:
+            cv.imwrite(f'output/hw1/11_corners/{CAMERAS.get(camera)}/{name}_corners_shown.png', img)
+
     cv.destroyAllWindows()
     print(f"There were {qty_useful_pics} useful calibration images.")
-    # ret, mtx, dist, rvecs, tvecs = cv.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
+    # return objpoints, imgpoints, img_gray.shape[::-1], used_imgs
+    if not qty_useful_pics:
+        print(f"Not enough quality pictures to calibrate the camera!")
+        sys.exit()
+    # ret, mtx, dist, rvecs, tvecs = cv.calibrateCamera(objpoints, imgpoints, img_gray.shape[::-1], None, None)
+    rms, K, dist, rvecs, tvecs, sd_int, sd_ext, per_view = cv.calibrateCameraExtended(objpoints, imgpoints, img_gray.shape[::-1], None, None)
+
+    print(f'RMS: {rms}')
+    print(f'K:\n{K}')
+    print(f'dist:\n{dist}')
+    print(f'rvecs length: {len(rvecs)}')
+    print(f'tvecs length: {len(tvecs)}')
+    print(f'sd_int shape: {sd_int.shape}')
+    print(f'sd_ext shape: {sd_ext.shape}')
+    print(f'per_view shape: {per_view.shape}')
