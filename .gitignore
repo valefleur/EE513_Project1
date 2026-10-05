@@ -2,6 +2,10 @@
 images/*
 images
 
+# Image outputs
+output/*
+output
+
 # Mac OS
 .DS_Store
 
