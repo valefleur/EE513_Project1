@@ -20,6 +20,8 @@ if __name__ == "__main__":
     # analyze.calibrate_camera('images/a7sii/a7sii_calibration/', camera=cam)
     # analyze.calibrate_camera('images/a7sii/test/', camera=cam)
 
+    analyze.generate_side_by_side(f'{sony_both}.ARW', f'{sony_both}.JPG')
+
     print(f"------------------")
 
     print(f"iPhone 16 Pro Max:")
@@ -30,5 +32,8 @@ if __name__ == "__main__":
     # iphone_raw_img, iphone_raw_name = analyze._open_image(f'{iphone_both}.DNG')
     # iphone_heic_img, iphone_heic_name = analyze._open_image(f'{iphone_both}.HEIC')
     # analyze.zoomed_way_in(iphone_raw_img, iphone_heic_img, iphone_raw_name, camera=cam)
-    analyze.calibrate_camera('images/iPhone16/iphone16_calibration/', camera=cam)
+    # analyze.calibrate_camera('images/iPhone16/iphone16_calibration/', camera=cam)
     # analyze.calibrate_camera('images/iPhone16/test/', camera=cam)
+
+    # analyze.generate_side_by_side(f'{iphone_both}.DNG', f'{iphone_both}.HEIC')
+

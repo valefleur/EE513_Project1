@@ -299,3 +299,31 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     print(f'sd_int shape: {sd_int.shape}')
     print(f'sd_ext shape: {sd_ext.shape}')
     print(f'per_view shape: {per_view.shape}')
+
+
+def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
+    # TODO GitHub issue #1, images show up blue
+    # Though I will probably do a ctrl-f on the phrase "GitHub #1"
+    # since that is the format used in my current day job.
+    image_0, image_0_name = _open_image(image_0)
+    image_1, image_1_name = _open_image(image_1)
+
+    rgb_img_0 = cv.cvtColor(image_0, cv.COLOR_BGR2RGB)
+    rgb_img_1 = cv.cvtColor(image_1, cv.COLOR_BGR2RGB)
+
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    if title:
+        fig.subtitle(f"{title}")
+    axes[0].imshow(image_0)
+    axes[0].xaxis.tick_top()
+    axes[0].set_title(f'{image_0_name}')
+    axes[1].imshow(image_1)
+    axes[1].xaxis.tick_top()
+    axes[1].set_title(f'{image_1_name}')
+
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    if SAVE_PLOTS:
+        title_alt = f"{image_0_name}+{image_1_name}"
+        fig.savefig(f"output/hw1/06_RAW_vs_Processed/{title if title else title_alt}.png")
