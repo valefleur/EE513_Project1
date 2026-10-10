@@ -17,14 +17,14 @@ except ImportError:
 SAVE_PLOTS = True
 CAMERAS = {'sony': 'Sony_a7sii', 'iphone': 'iPhone_16ProMax'}
 PATTERN_SIZE = (9, 6)
-SQUARE_MM = 20.01          # TODO As measured with a ruler
+SQUARE_MM = 20.01          # As measured with a ruler
 
 def _is_raw(path_to_image):
-    MY_CAMERAS = ['.ARW', '.DNG'] # Sony a7s ii and iPhone 16 RAW formats
+    MY_CAMERAS = ['.arw', '.dng'] # Sony a7s ii and iPhone 16 RAW formats
     RAW = [".cr2", ".cr3", ".nef", ".raf", ".orf", ".rw2", ".pef", ".srw"] + MY_CAMERAS
     assert os.path.isfile(path_to_image), "ERROR: Path to image required."
 
-    return (os.path.splitext(path_to_image)[1] in RAW)
+    return (os.path.splitext(path_to_image)[1].lower() in RAW)
 
 def _is_heic(path_to_image):
     return pillow_heif.is_supported(path_to_image)
@@ -181,7 +181,7 @@ def _open_image(path):
 
     if _is_raw(path_to_image=path):
         img = rawpy.imread(path)
-        rgb_img = img.postprocess()
+        rgb_img = img.postprocess(user_flip=0, no_auto_bright=True, use_camera_wb=True)
     elif _is_heic(path_to_image=path):
         img = pillow_heif.open_heif(path, convert_hdr_to_8bit=False, hdr_to_16bit=False)
         rgb_img = np.asarray(img)
@@ -229,7 +229,7 @@ def contact_sheet(image_paths, camera=None, SHOW=True):
     for f, thumb in zip(axes, thumbs):
         f.imshow(thumb)
         f.xaxis.tick_top()
-    for f in range(len(thumbs)+1, qty_rows*qty_cols):
+    for f in range(len(thumbs), qty_rows*qty_cols):
         axes[f].axis('off')
 
     plt.tight_layout()
@@ -254,6 +254,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     objpoints = [] # 3d point in real world space
     imgpoints = [] # 2d points in image plane.
     used_imgs = []
+    # sizes = [] # TODO GitHub issue #3, confirm camera didn't rotate when taking calibration images
 
     raws = _list_raw_files(path_to_raws)
     contact_sheet(raws, camera)
@@ -261,6 +262,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     for i in raws:
         img, name = _open_image(i)
         img_gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        # sizes.append(img_gray.shape[::-1])
         if SHOW:
             cv.imshow(f'{name}', img_gray)
             cv.waitKey(2)
@@ -283,6 +285,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
             cv.imwrite(f'output/hw1/11_corners/{CAMERAS.get(camera)}/{name}_corners_shown.png', img)
 
     cv.destroyAllWindows()
+    # assert len(sizes) == 1, f"Mixed image sizes: {sizes}"
     print(f"There were {qty_useful_pics} useful calibration images.")
     # return objpoints, imgpoints, img_gray.shape[::-1], used_imgs
     if not qty_useful_pics:
@@ -300,6 +303,13 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     print(f'sd_ext shape: {sd_ext.shape}')
     print(f'per_view shape: {per_view.shape}')
 
+    # Improved diagnostics
+    # Show the reprojection RMS for files whose RMS is large
+    for p, err in zip(used_imgs, per_view.ravel()):
+        if err > 2.5:
+            print(f"Consider tossing {os.path.basename(p)}: {err:.3f} px")
+    print("intrinsic std devs (fx, fy, cx, cy, k1, k2, p1, p2, k3):\n", sd_int.ravel())
+
 
 def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
     # TODO GitHub issue #1, images show up blue
@@ -313,11 +323,11 @@ def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
 
     fig, axes = plt.subplots(1, 2, figsize=(8, 4))
     if title:
-        fig.subtitle(f"{title}")
-    axes[0].imshow(image_0)
+        fig.suptitle(f"{title}")
+    axes[0].imshow(rgb_img_0)
     axes[0].xaxis.tick_top()
     axes[0].set_title(f'{image_0_name}')
-    axes[1].imshow(image_1)
+    axes[1].imshow(rgb_img_1)
     axes[1].xaxis.tick_top()
     axes[1].set_title(f'{image_1_name}')
 
