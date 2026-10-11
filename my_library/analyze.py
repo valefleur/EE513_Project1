@@ -277,6 +277,30 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
         fig.savefig(f"output/hw1/{CAMERAS.get(camera)}_{title}.png")
 
 
+def undistort(img, K, distortion, camera=None, SHOW=True):
+    assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
+    img_to_undistort, img_name = _open_image(img)
+    rbg_img_to_undistort = cv.cvtColor(img_to_undistort, cv.COLOR_BGR2RGB)
+    print(f"Undistorting: {img_name}")
+    undistorted = cv.undistort(rbg_img_to_undistort, K, distortion)
+
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    title = "Undistorting"
+    fig.suptitle(f"{title}")
+    axes[0].imshow(rbg_img_to_undistort)
+    axes[0].set_title(f'What the Camera Saw')
+    axes[0].xaxis.tick_top()
+
+    axes[1].imshow(undistorted)
+    axes[1].set_title(f'The Undistorted View')
+    axes[1].xaxis.tick_top()
+
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    if SAVE_PLOTS:
+        fig.savefig(f"output/hw1/{camera}_{title}.png")
+
 def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     # Following: https://docs.opencv.org/4.13.0/dc/dbb/tutorial_py_calibration.html
@@ -299,6 +323,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     for i in raws:
         img, name = _open_image(i)
         img_gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        # print(f"Image {i} is {name}.")
         sizes.append(img_gray.shape[::-1])
         if SHOW:
             cv.imshow(f'{name}', img_gray)
@@ -357,6 +382,8 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
         if err > RMS_LIMIT:
             print(f"Consider tossing {os.path.basename(p)}: RMS is {err:.3f} px")
     print("intrinsic std devs (fx, fy, cx, cy, k1, k2, p1, p2, k3):\n", sd_int.ravel())
+
+    return K, dist
 
 
 def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
