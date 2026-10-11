@@ -25,3 +25,9 @@ For homework assignments and Project 1 reports I plan to use a [Sony $\alpha$ 7s
 ### iPhone 16 Pro Max
 
 For kicks, I will also be running analysis and comparison using an [iPhone 16 Pro Max](https://support.apple.com/en-us/121032) using the [Truly Simple Raw Camera](https://trulysimpletools.com/trulysimplerawcamera/) app and the $1$x lens and no flash.
+
+From Apple, the $1$x lens is called the [48MP Fusion lens](https://support.apple.com/en-us/121032):
+$48$MP Fusion: $24$ mm, ƒ/$1.78$ aperture, second‑generation sensor‑shift optical image stabilization, $100$% Focus Pixels, support for super‑high‑resolution photos ($24$MP and $48$MP)
+Also enables $12$MP $2$x Telephoto: $48$ mm, ƒ/$1.78$ aperture, second generation sensor‑shift optical image stabilization, $100$% Focus Pixels
+
+The photos are coming out at $12$MP $24$ mm, ƒ/$1.78$ aperture.

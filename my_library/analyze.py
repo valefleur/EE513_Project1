@@ -17,14 +17,14 @@ except ImportError:
 SAVE_PLOTS = True
 CAMERAS = {'sony': 'Sony_a7sii', 'iphone': 'iPhone_16ProMax'}
 PATTERN_SIZE = (9, 6)
-SQUARE_MM = 20.01          # TODO As measured with a ruler
+SQUARE_MM = 20.01          # As measured with a ruler
 
 def _is_raw(path_to_image):
-    MY_CAMERAS = ['.ARW', '.DNG'] # Sony a7s ii and iPhone 16 RAW formats
+    MY_CAMERAS = ['.arw', '.dng'] # Sony a7s ii and iPhone 16 RAW formats
     RAW = [".cr2", ".cr3", ".nef", ".raf", ".orf", ".rw2", ".pef", ".srw"] + MY_CAMERAS
     assert os.path.isfile(path_to_image), "ERROR: Path to image required."
 
-    return (os.path.splitext(path_to_image)[1] in RAW)
+    return (os.path.splitext(path_to_image)[1].lower() in RAW)
 
 def _is_heic(path_to_image):
     return pillow_heif.is_supported(path_to_image)
@@ -121,7 +121,7 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tBit Depth: {bit_depth}")
     print(f"\t\tNum Chnls: {num_channels}")
 
-def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=True):
+def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     print(f"camera is [{camera}]")
     SQ_SIZE = 30
@@ -177,11 +177,11 @@ def _open_image(path):
     path = os.fspath(path)
     file_name = os.path.basename(path)
     # name, ext = os.path.splitext(file_name)
-    print(f"\tOpening {file_name}")
+    # print(f"\tOpening {file_name}")
 
     if _is_raw(path_to_image=path):
         img = rawpy.imread(path)
-        rgb_img = img.postprocess()
+        rgb_img = img.postprocess(user_flip=0, no_auto_bright=True, use_camera_wb=True)
     elif _is_heic(path_to_image=path):
         img = pillow_heif.open_heif(path, convert_hdr_to_8bit=False, hdr_to_16bit=False)
         rgb_img = np.asarray(img)
@@ -205,7 +205,8 @@ def _list_raw_files(path_to_raws):
     print(f"There are {len(raw_files)} RAW files.")
     return raw_files
 
-def contact_sheet(image_paths, camera=None, SHOW=True):
+
+def contact_sheet(image_paths, camera=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     HEIGHT = 100
     WIDTH = 100
@@ -229,7 +230,7 @@ def contact_sheet(image_paths, camera=None, SHOW=True):
     for f, thumb in zip(axes, thumbs):
         f.imshow(thumb)
         f.xaxis.tick_top()
-    for f in range(len(thumbs)+1, qty_rows*qty_cols):
+    for f in range(len(thumbs), qty_rows*qty_cols):
         axes[f].axis('off')
 
     plt.tight_layout()
@@ -238,6 +239,42 @@ def contact_sheet(image_paths, camera=None, SHOW=True):
     if SAVE_PLOTS:
         title=f'{camera}_contact_sheet'
         fig.savefig(f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png")
+
+
+def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, per_view, shape, camera=None, SHOW=True):
+    # Note: Code borrowed from Prof. James McNames with slight tweaks
+    assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
+    res, pos = [], []
+    for op, ip, rv, tv in zip(real_points, image_points, rvecs, tvecs):
+        proj, _ = cv.projectPoints(op, rv, tv, K, distortion)
+        res.append(ip.reshape(-1, 2) - proj.reshape(-1, 2)) # Claude suggested this
+        # res.append(ip.reshape(-1, 2) - ip.reshape(-1, 2)) # McNames does this
+        pos.append(ip.reshape(-1,2))
+        # collect ip.reshape(-1, 2) and res, then plt.quiver(x, y, res_x, res_y) across all images
+    res, pos = np.vstack(res), np.vstack(pos)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4.2))
+    a1.quiver(pos[:, 0], pos[:, 1], res[:, 0], res[:, 1],
+            np.linalg.norm(res, axis=1), cmap="viridis",
+            angles="xy", scale_units="xy", scale=0.002, width=0.003)
+    a1.add_patch(plt.Rectangle((0, 0), *shape, fill=False, ec="#213921", lw=1.2))
+    a1.set_xlim(-200, shape[0] + 200); a1.set_ylim(shape[1] + 200, -200)
+    a1.set_aspect("equal"); a1.grid(alpha=0)
+    a1.set_title("residuals by position, drawn 500x", fontsize=11)
+    a1.xaxis.tick_top()
+
+    a2.plot(np.arange(1, len(per_view) + 1), per_view.ravel(), "o-",
+            color="#6d8d24", lw=1.5, ms=5)
+    a2.axhline(rms, color="#213921", ls="--", lw=1.3, label=f"overall {rms:.3f} px")
+    a2.set_xlabel("view"); a2.set_ylabel("per-view RMS (px)")
+    a2.set_title("which capture is dragging the fit", fontsize=11); a2.legend(fontsize=9)
+    a2.xaxis.tick_top()
+
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    if SAVE_PLOTS:
+        title=f'Residuals'
+        fig.savefig(f"output/hw1/{CAMERAS.get(camera)}_{title}.png")
 
 
 def calibrate_camera(path_to_raws, camera=None, SHOW=False):
@@ -254,6 +291,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     objpoints = [] # 3d point in real world space
     imgpoints = [] # 2d points in image plane.
     used_imgs = []
+    sizes = [] # TODO GitHub issue #3, confirm camera didn't rotate when taking calibration images
 
     raws = _list_raw_files(path_to_raws)
     contact_sheet(raws, camera)
@@ -261,14 +299,21 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     for i in raws:
         img, name = _open_image(i)
         img_gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        sizes.append(img_gray.shape[::-1])
         if SHOW:
             cv.imshow(f'{name}', img_gray)
             cv.waitKey(2)
-        ret, corners = cv.findChessboardCorners(img_gray, PATTERN_SIZE, cv.CALIB_CB_ADAPTIVE_THRESH + cv.CALIB_CB_NORMALIZE_IMAGE)
-        if not ret:
-            print(f"No corners in {name}.\n\t\tConsider removing it.")
-            continue
-        sharp_corners = cv.cornerSubPix(img_gray, corners, (11, 11), (-1, -1), crit)
+        if 1:
+            ret, corners = cv.findChessboardCorners(img_gray, PATTERN_SIZE, cv.CALIB_CB_ADAPTIVE_THRESH + cv.CALIB_CB_NORMALIZE_IMAGE)
+            if not ret:
+                print(f"No corners in {name}.  Removing it.")
+                continue
+            sharp_corners = cv.cornerSubPix(img_gray, corners, (11, 11), (-1, -1), crit)
+        else:
+            ret, sharp_corners = cv.findChessboardCornersSB(img_gray, PATTERN_SIZE, cv.CALIB_CB_ADAPTIVE_THRESH + cv.CALIB_CB_NORMALIZE_IMAGE)
+            if not ret:
+                print(f"No corners in {name}.  Removing it.")
+                continue
 
         qty_useful_pics = qty_useful_pics + 1
         used_imgs.append(i)
@@ -283,6 +328,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
             cv.imwrite(f'output/hw1/11_corners/{CAMERAS.get(camera)}/{name}_corners_shown.png', img)
 
     cv.destroyAllWindows()
+    # assert len(sizes) == 1, f"Mixed image sizes: {sizes}"
     print(f"There were {qty_useful_pics} useful calibration images.")
     # return objpoints, imgpoints, img_gray.shape[::-1], used_imgs
     if not qty_useful_pics:
@@ -291,14 +337,26 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     # ret, mtx, dist, rvecs, tvecs = cv.calibrateCamera(objpoints, imgpoints, img_gray.shape[::-1], None, None)
     rms, K, dist, rvecs, tvecs, sd_int, sd_ext, per_view = cv.calibrateCameraExtended(objpoints, imgpoints, img_gray.shape[::-1], None, None)
 
+    plot_residuals(objpoints, imgpoints, rms, K, dist, rvecs, tvecs, per_view, sizes[0], camera=camera)
+
     print(f'RMS: {rms}')
     print(f'K:\n{K}')
+    print(f'Image Size: {sizes[0]}')
+    print(f'Image Center: {(sizes[0][0]/2,sizes[0][1]/2)}')
     print(f'dist:\n{dist}')
     print(f'rvecs length: {len(rvecs)}')
     print(f'tvecs length: {len(tvecs)}')
     print(f'sd_int shape: {sd_int.shape}')
     print(f'sd_ext shape: {sd_ext.shape}')
     print(f'per_view shape: {per_view.shape}')
+
+    # Improved diagnostics
+    # Show the reprojection RMS for files whose RMS is large
+    RMS_LIMIT = 1.5
+    for p, err in zip(used_imgs, per_view.ravel()):
+        if err > RMS_LIMIT:
+            print(f"Consider tossing {os.path.basename(p)}: RMS is {err:.3f} px")
+    print("intrinsic std devs (fx, fy, cx, cy, k1, k2, p1, p2, k3):\n", sd_int.ravel())
 
 
 def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
@@ -313,11 +371,11 @@ def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
 
     fig, axes = plt.subplots(1, 2, figsize=(8, 4))
     if title:
-        fig.subtitle(f"{title}")
-    axes[0].imshow(image_0)
+        fig.suptitle(f"{title}")
+    axes[0].imshow(rgb_img_0)
     axes[0].xaxis.tick_top()
     axes[0].set_title(f'{image_0_name}')
-    axes[1].imshow(image_1)
+    axes[1].imshow(rgb_img_1)
     axes[1].xaxis.tick_top()
     axes[1].set_title(f'{image_1_name}')
 
