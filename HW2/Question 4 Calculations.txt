@@ -1,0 +1,27 @@
+Compute your pixel pitch in micrometers as 1000 fmm / fpx, where fmm is the focal length recorded in the EXIF metadata and fpx is the mean of the two focal lengths in pixels from item 1. 
+
+EXIF data says focal length is fmm = 6.8 mm
+In the intrinsic characteristics K matrix determined by cv.calibrateCameraExtended() on Oct. 12th,
+f_x = 2884 px
+f_y = 2871 px
+fpx = (2884 + 2871) / 2 = 2878 px
+
+pixel pitch = 6.8 mm / 2878 px * 1000 = 2.363 um/px
+
+
+Then obtain it a second way, by a route that does not use your calibration at all: 
+1. divide the 35 mm equivalent focal length in the EXIF by the actual focal length to get the crop factor, 
+2. divide the 43.3 mm diagonal of 35 mm film by the crop factor to get your sensor diagonal, 
+3. and divide that by the image diagonal in pixels. 
+
+1. EXIF data says the 35 mm equivalent focal length is 24.0 mm and the actual is 6.8 mm.
+	24.0 mm / 6.8 mm = 3.529 crop factor
+2. 43.3 mm diag / 3.529 crop factor = 12.270 sensor diagonal
+3. image diagonal in pixels = hypotenuse = np.sqrt(width**2 + height**2) = np.sqrt(3024**2 + 4032**2) = 5040 px
+
+	pixel pitch = 12.270 mm / 5040 px =  2.434 um/px
+
+RMS = np.sqrt((2.363**2 + 2.434**2)/ 2) = np.sqrt(11.508 / 2) = np.sqrt(5.754) = 2.40
+	This feels like a lot given the smaller value is less than the root mean square error...
+
+Everything in Part 2 rests on this number, and the second route is the only warning you will get that the first one is wrong.
