@@ -221,11 +221,11 @@ def contact_sheet(image_paths, camera=None, SHOW=False):
     qty_cols = 4
     # qty_rows = int(len(thumbs) / qty_cols) + (1 if len(thumbs) % qty_cols else 0) # less efficient than math.ceil()
     qty_rows = math.ceil(len(thumbs) / qty_cols)
-    print(f"There is room for {qty_rows}*{qty_cols} = {qty_rows*qty_cols} thumbnails [and we have {len(thumbs)}].")
+    # print(f"There is room for {qty_rows}*{qty_cols} = {qty_rows*qty_cols} thumbnails [and we have {len(thumbs)}].")
 
     fig, axes = plt.subplots(qty_rows, qty_cols, figsize=(8, 2 * qty_rows))
     axes = np.atleast_1d(axes).ravel()
-    print(f'There are {len(axes)} of type [{axes.dtype}]')
+    # print(f'There are {len(axes)} of type [{axes.dtype}]')
     fig.suptitle(f"Contact Sheet for {CAMERAS.get(camera)}")
     for f, thumb in zip(axes, thumbs):
         f.imshow(thumb)
@@ -277,31 +277,91 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
         fig.savefig(f"output/hw1/{CAMERAS.get(camera)}_{title}.png")
 
 
-def undistort(img, K, distortion, camera=None, SHOW=True):
+def edge_deviation(pts, pattern=PATTERN_SIZE, side='first_col'):
+    """
+    Fit a line through one outer column of corners.
+    Return the points, the line, and signed perpendicular deviations (px).
+    """
+    cols, rows = pattern # PATTERN_SIZE = (9, 6): 9 corners across, 6 down
+    grid = np.asarray(pts, np.float32).reshape(rows, cols, 2)   # corners come back row-major
+    edge = np.ascontiguousarray(grid[:, 0, :] if side == 'first_col' else grid[:, -1, :])
+
+    vx, vy, x0, y0 = cv.fitLine(edge, cv.DIST_L2, 0, 0.01, 0.01).ravel()   # unit direction + a point on the line
+    dev = (edge[:, 0] - x0) * vy - (edge[:, 1] - y0) * vx                  # signed perpendicular distance
+    return edge, (vx, vy, x0, y0), dev
+
+
+def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=True):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
+
     img_to_undistort, img_name = _open_image(img)
     rbg_img_to_undistort = cv.cvtColor(img_to_undistort, cv.COLOR_BGR2RGB)
-    print(f"Undistorting: {img_name}")
-    undistorted = cv.undistort(rbg_img_to_undistort, K, distortion)
 
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    print(f"Undistorting: {img_name} which has size: {rbg_img_to_undistort.shape[:2]}")
+    newK = None
+    if DEBUG:
+        h, w = rbg_img_to_undistort.shape[:2]
+        newK, roi = cv.getOptimalNewCameraMatrix(K, distortion, (w, h), alpha=1)
+    undistorted = cv.undistort(rbg_img_to_undistort, K, distortion, None, newK)
+
+    pts_raw = pts_und = None
+    if corners is not None:
+        pts_raw = np.asarray(corners, dtype=np.float32).reshape(-1, 1, 2)
+        P = newK if newK is not None else K
+        pts_und = cv.undistortPoints(pts_raw, K, distortion, P=P).reshape(-1, 2)
+        pts_raw = pts_raw.reshape(-1, 2)
+    else:
+        print(f'Corners is empty in undistort()')
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     title = "Undistorting"
     fig.suptitle(f"{title}")
     axes[0].imshow(rbg_img_to_undistort)
     axes[0].set_title(f'What the Camera Saw')
     axes[0].xaxis.tick_top()
+    x = y = []
+    last_on_left = -1 - PATTERN_SIZE[0]
+    if pts_raw.any():
+        # x.append(pts_raw[0, 0])
+        # y.append(pts_raw[0, 1])
+        # x.append(pts_raw[last_on_left, 0])
+        # y.append(pts_raw[last_on_left, 1])
+        # axes[0].plot(x, y, '-', color='yellow') # for every row, plot column 0
+        # axes[0].scatter(x, y, s=12, c='red', edgecolors='white', linewidths=0.4)
+        # axes[0].plot(pts_raw[:, 0], pts_raw[:, 1], '-', color='yellow') # for every row, plot column 0
+        # axes[0].scatter(pts_raw[:, 0], pts_raw[:, 1], s=12, c='red', edgecolors='white', linewidths=0.4)
+        edge, (vx, vy, x0, y0), dev = edge_deviation(pts_raw)
+        t = (edge - [x0, y0]) @ [vx, vy]                      # position of each point along the line
+        p0 = np.array([x0, y0]) + t.min() * np.array([vx, vy])
+        p1 = np.array([x0, y0]) + t.max() * np.array([vx, vy])
+        axes[0].plot([p0[0], p1[0]], [p0[1], p1[1]], 'c-', lw=1.5)
+        axes[0].scatter(edge[:, 0], edge[:, 1], s=40, facecolors='none', edgecolors='cyan')
+        axes[0].set_xlabel(f"Max deviation: {np.abs(dev).max():.2f} px\nRMS: {np.sqrt(np.mean(dev**2)):.2f} px")
 
     axes[1].imshow(undistorted)
-    axes[1].set_title(f'The Undistorted View')
+    axes[1].set_title(f'The Undistorted View{' Full Frame' if DEBUG else ''}')
     axes[1].xaxis.tick_top()
+    if pts_und.any():
+        # axes[1].plot(pts_und[:, 0], pts_und[:, 1], '-', color='blue') # for every row, plot column 0
+        # axes[1].scatter(pts_und[:, 0], pts_und[:, 1], s=12, c='purple', edgecolors='white', linewidths=0.4)
+        edge, (vx, vy, x0, y0), dev = edge_deviation(pts_und)
+        t = (edge - [x0, y0]) @ [vx, vy]                      # position of each point along the line
+        p0 = np.array([x0, y0]) + t.min() * np.array([vx, vy])
+        p1 = np.array([x0, y0]) + t.max() * np.array([vx, vy])
+        axes[1].plot([p0[0], p1[0]], [p0[1], p1[1]], 'c-', lw=1.5)
+        axes[1].scatter(edge[:, 0], edge[:, 1], s=40, facecolors='none', edgecolors='cyan')
+        axes[1].set_xlabel(f"Max deviation: {np.abs(dev).max():.2f} px\nRMS: {np.sqrt(np.mean(dev**2)):.2f} px")
 
     plt.tight_layout()
     if SHOW:
         plt.show()
     if SAVE_PLOTS:
-        fig.savefig(f"output/hw1/{camera}_{title}.png")
+        fig.savefig(f"output/hw2/03_{camera}_{title}.png")
 
-def calibrate_camera(path_to_raws, camera=None, SHOW=False):
+    return rbg_img_to_undistort, undistorted
+
+
+def calibrate_camera(path_to_raws, camera=None, oneoff=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     # Following: https://docs.opencv.org/4.13.0/dc/dbb/tutorial_py_calibration.html
     # termination criteria
@@ -315,7 +375,12 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     objpoints = [] # 3d point in real world space
     imgpoints = [] # 2d points in image plane.
     used_imgs = []
-    sizes = [] # TODO GitHub issue #3, confirm camera didn't rotate when taking calibration images
+    sizes = [] # TODO GitHub issue #3, confirm camera didn't flip to portrait mode when taking calibration images
+
+    oneoff_corners = []
+    if oneoff:
+        oneoff_name = os.path.basename(oneoff)
+        print(f'***** Oneoff image name: {oneoff_name}')
 
     raws = _list_raw_files(path_to_raws)
     contact_sheet(raws, camera)
@@ -339,6 +404,9 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
             if not ret:
                 print(f"No corners in {name}.  Removing it.")
                 continue
+        if oneoff and (name in [oneoff_name]):
+            oneoff_corners.append(sharp_corners)
+            print(f'---> Oneoff image: {oneoff_name}')
 
         qty_useful_pics = qty_useful_pics + 1
         used_imgs.append(i)
@@ -359,8 +427,11 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
     if not qty_useful_pics:
         print(f"Not enough quality pictures to calibrate the camera!")
         sys.exit()
+    flgs = None
+    # flgs = cv.CALIB_FIX_K3
+    # flgs = cv.CALIB_FIX_K2 | cv.CALIB_FIX_K3
     # ret, mtx, dist, rvecs, tvecs = cv.calibrateCamera(objpoints, imgpoints, img_gray.shape[::-1], None, None)
-    rms, K, dist, rvecs, tvecs, sd_int, sd_ext, per_view = cv.calibrateCameraExtended(objpoints, imgpoints, img_gray.shape[::-1], None, None)
+    rms, K, dist, rvecs, tvecs, sd_int, sd_ext, per_view = cv.calibrateCameraExtended(objpoints, imgpoints, img_gray.shape[::-1], None, None, flags=flgs)
 
     plot_residuals(objpoints, imgpoints, rms, K, dist, rvecs, tvecs, per_view, sizes[0], camera=camera)
 
@@ -383,7 +454,7 @@ def calibrate_camera(path_to_raws, camera=None, SHOW=False):
             print(f"Consider tossing {os.path.basename(p)}: RMS is {err:.3f} px")
     print("intrinsic std devs (fx, fy, cx, cy, k1, k2, p1, p2, k3):\n", sd_int.ravel())
 
-    return K, dist
+    return K, dist, (oneoff_corners[0] if len(oneoff_corners) > 0 else None)
 
 
 def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
