@@ -458,9 +458,6 @@ def calibrate_camera(path_to_raws, camera=None, oneoff=None, SHOW=False):
 
 
 def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
-    # TODO GitHub issue #1, images show up blue
-    # Though I will probably do a ctrl-f on the phrase "GitHub #1"
-    # since that is the format used in my current day job.
     image_0, image_0_name = _open_image(image_0)
     image_1, image_1_name = _open_image(image_1)
 
