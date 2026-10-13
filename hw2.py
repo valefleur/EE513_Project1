@@ -5,11 +5,21 @@ if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
     cam = 'iphone'
 
-    K, distortion = analyze.calibrate_camera('images/iPhone16/all_calib_images/', camera=cam)
-    # K, distortion = analyze.calibrate_camera('images/iPhone16/test/', camera=cam)
+    TEST = False
 
-    # analyze.undistort('images/iPhone16/all_calib_images/D1044335-EB95-4F60-8709-7B942E0B6825.DNG', camera=cam)
+    camera_path = 'images/iPhone16/'
+    calib_path = 'all_calib_images/'
+    if TEST:
+        calib_path = 'test/'
 
-    # straigh_lines_img = 'images/iPhone16/Straight_Lines/A56046EA-FEEA-4284-A51A-2DAF03198E01.DNG'
-    straigh_lines_img = 'images/iPhone16/Straight_Lines/3D244010-6AE0-40AD-8050-317C858BC691.DNG'
-    analyze.undistort(straigh_lines_img, K, distortion, cam)
+    calib_imgs_path = f'{camera_path}{calib_path}'
+
+    # straight_lines_img = f'{calib_imgs_path}D1044335-EB95-4F60-8709-7B942E0B6825.DNG'
+    straight_lines_img = f'{calib_imgs_path}3FB78461-4AFA-46EE-834B-9E01675900C4.DNG'
+    # straight_lines_img = f'{calib_imgs_path}A56046EA-FEEA-4284-A51A-2DAF03198E01.DNG'
+    # straight_lines_img = f'{calib_imgs_path}3D244010-6AE0-40AD-8050-317C858BC691.DNG'
+
+
+    K, distortion, corners = analyze.calibrate_camera(calib_imgs_path, oneoff=straight_lines_img, camera=cam)
+
+    original, undistorted = analyze.undistort(straight_lines_img, K, distortion, corners, cam)
