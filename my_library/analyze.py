@@ -206,39 +206,56 @@ def _list_raw_files(path_to_raws):
     return raw_files
 
 
-def contact_sheet(image_paths, camera=None, SHOW=False):
+def contact_sheet(image_paths, camera=None, output=None, labels=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
+    assert (labels is None) or (len(labels) == len(image_paths)), f"ERROR: If labels [{len(labels)}] are provided, they must match the number of images [{len(image_paths)}]."
     HEIGHT = 100
     WIDTH = 100
     thumbs = []
+    print(f'image_paths[0]: {image_paths[0]}')
     for i in image_paths:
+        # print(f'\tOpening {i}')
         img, name = _open_image(i)
         small_img = cv.cvtColor(cv.resize(img, (WIDTH, HEIGHT)), cv.COLOR_BGR2RGB)
         thumbs.append(small_img)
 
-    # I know there will be between 18 and 22 thumbnails
-    # Let's use four images per row
-    qty_cols = 4
+    # if less than 20 images, use 4 columns
+    # If there are more than 20 images, use 5 columns
+    # If there are more than 40 images, use 10 columns
+    if len(thumbs) <= 20:
+        qty_cols = 4
+    elif len(thumbs) <= 40:
+        qty_cols = 5
+    else:
+        qty_cols = 10
     # qty_rows = int(len(thumbs) / qty_cols) + (1 if len(thumbs) % qty_cols else 0) # less efficient than math.ceil()
     qty_rows = math.ceil(len(thumbs) / qty_cols)
     # print(f"There is room for {qty_rows}*{qty_cols} = {qty_rows*qty_cols} thumbnails [and we have {len(thumbs)}].")
 
-    fig, axes = plt.subplots(qty_rows, qty_cols, figsize=(8, 2 * qty_rows))
+    fig, axes = plt.subplots(qty_rows, qty_cols, figsize=(10 * qty_cols, 2 * qty_rows))
     axes = np.atleast_1d(axes).ravel()
     # print(f'There are {len(axes)} of type [{axes.dtype}]')
     fig.suptitle(f"Contact Sheet for {CAMERAS.get(camera)}")
-    for f, thumb in zip(axes, thumbs):
+    for f, thumb, label in zip(axes, thumbs, labels if labels is not None else [None] * len(thumbs)):
         f.imshow(thumb)
         f.xaxis.tick_top()
+        if label is not None:
+            f.set_title(label, fontsize=8)
     for f in range(len(thumbs), qty_rows*qty_cols):
         axes[f].axis('off')
 
+    # reduce the whitespace between the subplots
+    plt.subplots_adjust(wspace=0.1, hspace=0.1)
     plt.tight_layout()
     if SHOW:
         plt.show()
     if SAVE_PLOTS:
         title=f'{camera}_contact_sheet'
-        fig.savefig(f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png")
+        if output:
+            path = f"{output}/{title}.png"
+        else:
+            path = f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png"
+        fig.savefig(path)
 
 
 def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, per_view, shape, camera=None, SHOW=True):

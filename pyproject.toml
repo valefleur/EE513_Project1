@@ -34,6 +34,7 @@ dependencies = [
   "ipywidgets>=8.1",
   "pytest>=8.3",
   "pillow-heif>=1.8.0",
+  "exifread>=3.5.1",
 ]
 
 # Deferred to week 6, when lecture 11 introduces PyTorch. Held back because it
