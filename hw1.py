@@ -5,9 +5,15 @@ if __name__ == "__main__":
     sony = 'images/a7sii/DSC04632.ARW'
     sony_ordinary = 'images/a7sii/RAW_and_JPEG/A7S04652.JPG'
     sony_both = 'images/a7sii/RAW_and_JPEG/A7S04652'
-    iphone = 'images/iPhone16/Terry.DNG'
-    iphone_ordinary = 'images/iPhone16/RAW_and_HEIC/IMG_6980.HEIC'
-    iphone_both = 'images/iPhone16/RAW_and_HEIC/IMG_6980'
+
+    iphone_path = 'images/iPhone16/'
+    iphone = f'{iphone_path}Terry.DNG'
+    iphone_ordinary = f'{iphone_path}RAW_and_HEIC/IMG_6980.HEIC'
+    iphone_both = f'{iphone_path}RAW_and_HEIC/IMG_6980'
+
+    lightroom = 'Lightroom/'
+    lightroom_checkerboard = f'{iphone_path}{lightroom}/Checkerboard/'
+    checkerboard_img = f'{lightroom_checkerboard}APC_0192.dng'
 
     print(f"Sony alpha 7s II:")
     cam = 'sony'
