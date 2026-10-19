@@ -1,5 +1,6 @@
 # hw1.py
 import my_library.analyze as analyze
+import my_library.mtf_analysis as mtf
 
 if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
@@ -9,6 +10,8 @@ if __name__ == "__main__":
 
     camera_path = 'images/iPhone16/'
     calib_path = 'all_calib_images/'
+
+    output = 'output/hw2/'
     if TEST:
         calib_path = 'test/'
 
@@ -20,6 +23,11 @@ if __name__ == "__main__":
     # straight_lines_img = f'{calib_imgs_path}3D244010-6AE0-40AD-8050-317C858BC691.DNG'
 
 
-    K, distortion, corners = analyze.calibrate_camera(calib_imgs_path, oneoff=straight_lines_img, camera=cam)
+    # K, distortion, corners = analyze.calibrate_camera(calib_imgs_path, oneoff=straight_lines_img, camera=cam)
 
-    original, undistorted = analyze.undistort(straight_lines_img, K, distortion, corners, cam)
+    # original, undistorted = analyze.undistort(straight_lines_img, K, distortion, corners, cam)
+
+
+    # Problem 7
+    print(f"\n**** Problem 7 ****")
+    mtf.main(output)
