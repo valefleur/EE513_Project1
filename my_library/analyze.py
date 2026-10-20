@@ -206,7 +206,7 @@ def _list_raw_files(path_to_raws):
     return raw_files
 
 
-def contact_sheet(image_paths, camera=None, output=None, labels=None, SHOW=False):
+def contact_sheet(image_paths, camera=None, output=None, question=None, labels=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     assert (labels is None) or (len(labels) == len(image_paths)), f"ERROR: If labels [{len(labels)}] are provided, they must match the number of images [{len(image_paths)}]."
     HEIGHT = 100
@@ -224,7 +224,7 @@ def contact_sheet(image_paths, camera=None, output=None, labels=None, SHOW=False
     # If there are more than 40 images, use 10 columns
     if len(thumbs) <= 20:
         qty_cols = 4
-    elif len(thumbs) <= 40:
+    elif len(thumbs) <= 30:
         qty_cols = 5
     else:
         qty_cols = 10
@@ -232,7 +232,7 @@ def contact_sheet(image_paths, camera=None, output=None, labels=None, SHOW=False
     qty_rows = math.ceil(len(thumbs) / qty_cols)
     # print(f"There is room for {qty_rows}*{qty_cols} = {qty_rows*qty_cols} thumbnails [and we have {len(thumbs)}].")
 
-    fig, axes = plt.subplots(qty_rows, qty_cols, figsize=(10 * qty_cols, 2 * qty_rows))
+    fig, axes = plt.subplots(qty_rows, qty_cols, figsize=(10 * qty_cols, 8 * qty_rows))
     axes = np.atleast_1d(axes).ravel()
     # print(f'There are {len(axes)} of type [{axes.dtype}]')
     fig.suptitle(f"Contact Sheet for {CAMERAS.get(camera)}")
@@ -250,10 +250,11 @@ def contact_sheet(image_paths, camera=None, output=None, labels=None, SHOW=False
     if SHOW:
         plt.show()
     if SAVE_PLOTS:
-        title=f'{camera}_contact_sheet'
+        title=f'{CAMERAS.get(camera)}_contact_sheet'
         if output:
-            path = f"{output}/{title}.png"
+            path = f"{output}/{question+'_' if question is not None else ''}{title}.png"
         else:
+            # TODO update HW1 code and output file structure to use more generic version above
             path = f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png"
         fig.savefig(path)
 
