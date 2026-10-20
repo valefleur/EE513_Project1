@@ -8,6 +8,14 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from pathlib import Path
+import sys
+
+# Locate the folder one directory up relative to this script
+parent_dir = Path(__file__).resolve().parent.parent
+
+# Add that directory to the module lookup path
+sys.path.append(str(parent_dir))
 
 import psu_imaging as psu
 import my_library.photon_transfer_curve as ptc
