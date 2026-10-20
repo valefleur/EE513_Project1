@@ -14,7 +14,7 @@ if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
     cam = 'iphone'
 
-    SPEED_UP = True
+    SPEED_UP = False
     LOW_ISO = True
 
     camera_path = 'images/iPhone16/'
@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
         # Problem 1
         print(f"\n**** Problem 1 ****")
-        analyze.contact_sheet(raws, camera=cam, output=output_path, labels=exposure_times)
+        analyze.contact_sheet(raws, camera=cam, output=output_path, question="01", labels=exposure_times)
 
         # Problem 2
         print(f"\n**** Problem 2 ****")
