@@ -8,7 +8,7 @@ import my_library.image_metadata as img
 import my_library.photon_transfer_curve as ptc
 import my_library.linear_light as ll
 import my_library.latex_formatter as tex
-import hw3_part2_sim as sim
+import HW3.hw3_part2_sim as sim
 
 if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
