@@ -121,6 +121,71 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tBit Depth: {bit_depth}")
     print(f"\t\tNum Chnls: {num_channels}")
 
+
+def histogram(img_path, output, camera=None):
+    ### Numpy approach; could also use OpenCV
+    file_name = os.path.basename(img_path)
+    print(f"\tHistogram analysis for {file_name}.")
+    # Unpack image data from metadata
+    with rawpy.imread(str(img_path)) as raw:
+        # Slice out pixels by color using the Bayer mosaic pattern
+        pattern = raw.raw_pattern
+        color_desc = raw.color_desc
+        print(f"\t\tDescriptor: {color_desc}\nPattern:\n{pattern}")
+        '''
+        TODO automatically use the pattern and color_desc to decide which
+        color is which array.  Since I am categorizing a single camera
+        it's ok to hard code it for now.
+        raw_pattern: [[2 3] [1 0]], desc: RGBG
+        B  G1
+        G2 R
+        '''
+        # [0::2, 1::2] means starting with row 0 take every other row
+        # and starting with column 1 take every other column.
+        # Effectively take one of every 4, but the upper right pixel
+        # every square of 4.
+        blue_arr = raw.raw_image_visible[0::2, 0::2]
+        grn2_arr = raw.raw_image_visible[0::2, 1::2]
+        grn1_arr = raw.raw_image_visible[1::2, 0::2]
+        red_arr  = raw.raw_image_visible[1::2, 1::2]
+        # print(f"\t\tThe green channels have the {'higher' if (np.mean(grn2_arr) + np.mean(grn1_arr)) > (np.mean(red_arr) + np.mean(blue_arr)) else 'lower'} mean.")
+
+        colors = np.asarray([red_arr, grn2_arr, blue_arr, grn1_arr])
+        color_names = np.asarray(['Red', 'Green 2', 'Blue', 'Green 1'])
+
+        exif_white_level = raw.white_level
+        max_intensity = 0
+        for color, name in zip(colors, color_names):
+            brightest = np.max(color)
+            if max_intensity < brightest:
+                max_intensity = brightest
+            print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
+
+
+        # per channel, flatten the array and call np.bincount (if int values)
+        color_means = []
+        bins_by_color = []
+        for color, name in zip(colors, color_names):
+            brightest = np.max(color)
+            avg = np.mean(color)
+            color_means.append(avg)
+            binned_count = np.bincount(color.flatten(), minlength=max_intensity)
+            bins_by_color.append(binned_count)
+            print(f"\t\t{str(name).upper()}")
+            print(f"\t\t\tMean Intensity: {avg}")
+            print(f"\t\t\tHighest occupied value: {np.max(np.nonzero(binned_count))}")
+            print(f"\t\t\tMost common intensity: {np.max(np.argmax(binned_count))}")
+
+
+        # compare np.max to the declared white level
+
+        # plot one histogram with all colors together
+
+        # do another plot of the upper 1-5% of the intensities
+        # np.argmax to find the tallest spike
+        # np.nonzero to find the highest bin with non-zero count
+
+
 def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     print(f"camera is [{camera}]")
