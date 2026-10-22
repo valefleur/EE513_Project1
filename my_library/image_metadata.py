@@ -198,6 +198,20 @@ def _format_exposure(seconds):
     return f"{seconds:g} s"
 
 
+def get_image_paths(target, suffixes=RAW_SUFFIXES):
+    target = Path(target)
+    if target.is_dir():
+        paths = sorted(p for p in target.rglob("*")
+                       if p.is_file() and p.suffix.lower() in suffixes)
+    else:
+        paths = [target]
+    if not paths:
+        print(f"No raw files found in {target}")
+        return []
+
+    return paths
+
+
 def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
     """Print a table of metadata for one raw file or every raw file under a directory.
 
