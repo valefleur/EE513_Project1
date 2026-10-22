@@ -19,6 +19,10 @@ CAMERAS = {'sony': 'Sony_a7sii', 'iphone': 'iPhone_16ProMax'}
 PATTERN_SIZE = (9, 6)
 SQUARE_MM = 20.01          # As measured with a ruler
 
+# Colors from: https://www.media.io/color-palette/blue-green-red-color-palette.html
+COLORS = {'Red': '#D7263D', 'Grn1': '#00A676', 'Grn2': '#197738', 'Blue': '#003B73', 'Alt': '#F4A261'} # City Transit
+# COLORS = {'Red': '#E76F51', 'Grn1': '#2A9D8F', 'Grn2': '#197738', 'Blue': '#1D3557', 'Alt': '#F4A261'} # Vintage Atlas
+
 def _is_raw(path_to_image):
     MY_CAMERAS = ['.arw', '.dng'] # Sony a7s ii and iPhone 16 RAW formats
     RAW = [".cr2", ".cr3", ".nef", ".raf", ".orf", ".rw2", ".pef", ".srw"] + MY_CAMERAS
@@ -122,7 +126,7 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tNum Chnls: {num_channels}")
 
 
-def histogram(img_path, output, camera=None):
+def histogram(img_path, output, camera=None, SHOW=False):
     ### Numpy approach; could also use OpenCV
     file_name = os.path.basename(img_path)
     print(f"\tHistogram analysis for {file_name}.")
@@ -148,10 +152,9 @@ def histogram(img_path, output, camera=None):
         grn2_arr = raw.raw_image_visible[0::2, 1::2]
         grn1_arr = raw.raw_image_visible[1::2, 0::2]
         red_arr  = raw.raw_image_visible[1::2, 1::2]
-        # print(f"\t\tThe green channels have the {'higher' if (np.mean(grn2_arr) + np.mean(grn1_arr)) > (np.mean(red_arr) + np.mean(blue_arr)) else 'lower'} mean.")
 
         colors = np.asarray([red_arr, grn2_arr, blue_arr, grn1_arr])
-        color_names = np.asarray(['Red', 'Green 2', 'Blue', 'Green 1'])
+        color_names = np.asarray(['Red', 'Grn2', 'Blue', 'Grn1'])
 
         exif_white_level = raw.white_level
         max_intensity = 0
@@ -159,7 +162,8 @@ def histogram(img_path, output, camera=None):
             brightest = np.max(color)
             if max_intensity < brightest:
                 max_intensity = brightest
-            print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
+            # print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
+            print(f"\t\tWhite level[{exif_white_level}] is {'>=' if exif_white_level >= brightest else '<'} {name} channel max: {brightest}.")
 
 
         # per channel, flatten the array and call np.bincount (if int values)
@@ -176,10 +180,32 @@ def histogram(img_path, output, camera=None):
             print(f"\t\t\tHighest occupied value: {np.max(np.nonzero(binned_count))}")
             print(f"\t\t\tMost common intensity: {np.max(np.argmax(binned_count))}")
 
+        # plot one histogram with all colors together
+        # create one plot with one histogram for each bins_by_color
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.set_xlabel('Intensity')
+        ax.set_ylabel('Count')
+        ax.set_title('Histogram of RAW Image Intensities')
+        # set x-axis to show only top some% of the intensities
+        some = 0.05
+        top_some_percent = max_intensity - int(max_intensity * some)
+        ax.set_xlim([top_some_percent, int(max_intensity * 1.01)])
+        # set y-axis upper limit to the max of what is in the upper some% of the intensities
+        ax.set_ylim([0, max([np.max(binned_count[top_some_percent:]) for binned_count in bins_by_color]) * 1.1])
+
+        for binned_count, name in zip(bins_by_color, color_names):
+            ax.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
+        ax.legend()
+
+        plt.tight_layout()
+        if SHOW:
+            plt.show()
+        if SAVE_PLOTS:
+            title=f'historam_of_{os.path.splitext(file_name)[0]}'
+            fig.savefig(f"{output}{title}.png")
 
         # compare np.max to the declared white level
 
-        # plot one histogram with all colors together
 
         # do another plot of the upper 1-5% of the intensities
         # np.argmax to find the tallest spike

@@ -14,27 +14,27 @@ if __name__ == "__main__":
     cam = 'iphone'
 
     SPEED_UP = False
-    LOW_ISO = True
+    TESTING = True
 
     camera_path = 'images/iPhone16/'
     calib_path = 'all_calib_images/'
     lightroom = 'Lightroom/'
     hw = 'hw4_color_charts/'
 
-    flor_path = f'{camera_path}{lightroom}{hw}florescent/'
-    led_path = f'{camera_path}{lightroom}{hw}led/'
-    incadesent_path = f'{camera_path}{lightroom}{hw}incadesent/'
-    cloudy_path = f'{camera_path}{lightroom}{hw}outdoors_cloudy/'
-    shade_path = f'{camera_path}{lightroom}{hw}outdoors_shade/'
+    light_types = {'flor': 'florescent/', 'led': 'led/', 'inc': 'incadesent/', 'cloudy': 'outdoors_cloudy/', 'shade': 'outdoors_shade/'}
 
-    color_sets = [flor_path, led_path, incadesent_path, f'{cloudy_path}/set1', f'{cloudy_path}/set2', shade_path]
+    flor_path = f'{camera_path}{lightroom}{hw}{light_types["flor"]}'
+    led_path = f'{camera_path}{lightroom}{hw}{light_types["led"]}'
+    incadesent_path = f'{camera_path}{lightroom}{hw}{light_types["inc"]}'
+    cloudy_path = f'{camera_path}{lightroom}{hw}{light_types["cloudy"]}'
+    shade_path = f'{camera_path}{lightroom}{hw}{light_types["shade"]}'
+
+    if TESTING:
+        color_sets = [flor_path, led_path]
+    else:
+        color_sets = [flor_path, led_path, incadesent_path, f'{cloudy_path}/set1', f'{cloudy_path}/set2', shade_path]
 
     output_path = 'output/hw4/'
-
-    # path_to_images = led_path
-
-
-    # if not SPEED_UP:
 
     for path_to_images in color_sets:
         print(f"\n\n~*~*~*~*~*~*~*~  Now looking at {path_to_images}  ~*~*~*~*~*~*~*~")
