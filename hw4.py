@@ -163,9 +163,32 @@ if __name__ == "__main__":
             plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {img_df['file'][first_img]}', f'Quarter resolution linear light image from {img_df['file'][first_img]}', f"{set_output_path}{problem}_linear_light.png", first_color='gray', second_color=None, SHOW=False)
 
 
-        # # Problem 3
-        # problem = "03"
-        # print(f"\n**** Problem {problem} ****")
+        # Problem 3
+        problem = "03"
+        print(f"\n**** Problem {problem} ****")
+        # Grab the image of the white sheet, which is the last one in the list of raws, and convert it to linear light
+        with rawpy.imread(str(raws[-1])) as raw:
+            raw_img = raw.raw_image_visible
+            black = img_df['black_levels'][len(img_df)-1][0]
+            saturation = img_df['saturation_level'][len(img_df)-1]
+            white_flat_linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=saturation)
+
+            # Determine the center (ideally we'd use the optical axis center principle point, but we don't have that info)
+            height, width = white_flat_linear.shape
+            print(f'White flat in linear light height: {height}, width: {width}')
+            cx, cy = width // 2, height // 2
+            x = np.arange(width) - cx
+            y = np.arange(height) - cy
+
+            # Calculate the distance squarted from center for each pixel
+            xv, yv = np.meshgrid(x, y)
+            distance_squared = xv**2 + yv**2
+
+            # Calculate cos(theta), but use geometry for easier computation
+            # cos(theta) = adjacent / hypotenuse = distance from center / distance from center to pixel
+            # cos(theta) = focal length / sqrt(focal_length^2 + distance_squared)
+            # That means cos^4(theta) = (focal_length^4) / (focal_length^2 + distance_squared)^2
+
 
 
 
