@@ -1,4 +1,4 @@
-# hw1.py
+# hw2.py
 import my_library.analyze as analyze
 import my_library.mtf_analysis as mtf
 import my_library.image_metadata as img
@@ -36,16 +36,27 @@ if __name__ == "__main__":
 
     if not SPEED_UP:
         # Problem 7
-        print(f"\n**** Problem 7 ****")
-        mtf.main(output)
+        problem_num = "07"
+        print(f"\n**** Problem {problem_num} ****")
+        analytical_mtf50 = mtf.main(output)
 
 
+        # Problem 8
+        problem_num = "08"
+        print(f"\n**** Problem {problem_num} ****")
+        analytical_mtf50_in_um = analytical_mtf50 / 1000
+        analytical_mtf50_in_pixels = analytical_mtf50_in_um * mtf.PITCH_UM * 2 # multiply by 2 since we are using the green-plane
+        print(f"Analytical system MTF50 is:\n\t{analytical_mtf50_in_um:.4f} cycles/um\n\t{analytical_mtf50:.1f}  cycles/mm\n\t{analytical_mtf50_in_pixels:.4f} cycles/pixel (green-plane)")
 
-    # Problem 12
-    print(f"\n**** Problem 12 ****")
-    raw_slants = analyze._list_raw_files(good_slanted_dir)
-    analyze.contact_sheet(raw_slants, camera=cam, output=output, question="12")
 
-    # Problem 13
-    print(f"\n**** Problem 13 ****")
-    img.assert_one_camera(raw_slants)
+    if not SPEED_UP:
+        # Problem 12
+        problem_num = "12"
+        print(f"\n**** Problem {problem_num} ****")
+        raw_slant_paths = analyze._list_raw_files(good_slanted_dir)
+        analyze.contact_sheet(raw_slant_paths, camera=cam, output=output, question=problem_num)
+
+        # Problem 13
+        problem_num = "13"
+        print(f"\n**** Problem {problem_num} ****")
+        img.assert_one_camera(raw_slant_paths)
