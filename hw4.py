@@ -2,6 +2,7 @@
 import os
 
 import numpy as np
+import pandas as pd
 import psu_imaging as psu
 import my_library.analyze as analyze
 import my_library.image_metadata as img
@@ -29,6 +30,8 @@ if __name__ == "__main__":
     cloudy_path = f'{camera_path}{lightroom}{hw}{light_types["cloudy"]}'
     shade_path = f'{camera_path}{lightroom}{hw}{light_types["shade"]}'
 
+    on_cloudy_set = 0
+
     if TESTING:
         color_sets = [flor_path, led_path]
     else:
@@ -36,12 +39,19 @@ if __name__ == "__main__":
 
     output_path = 'output/hw4/'
 
-    for path_to_images in color_sets:
-        print(f"\n\n~*~*~*~*~*~*~*~  Now looking at {path_to_images}  ~*~*~*~*~*~*~*~")
+    for path_to_images, lighting in zip(color_sets, light_types.keys()):
+        print(f"\n\n~*~*~*~*~*~*~*~  Now looking at images taken with {lighting} lighting. ~*~*~*~*~*~*~*~")
+
+        if lighting == 'cloudy':
+            on_cloudy_set = on_cloudy_set + 1
+        cloudy_set = f'set{on_cloudy_set}/' if (lighting == 'cloudy') else ''
+
+        img_data = pd.DataFrame(columns=['file', 'camera', 'exposure_s', 'iso', 'black_levels', 'white_level', 'bayer', 'shape'])
 
         # TODO clean up this pre-problems section to make it more useful & concise
-        rows = img.print_raw_metadata(path_to_images)
-        print(f"First row: {rows[0]}")
+        rows, img_df = img.print_raw_metadata(path_to_images, img_data)
+        # rows = img.print_raw_metadata(path_to_images)
+        # print(f"First row: {rows[0]}")
         file_names = []
         exposure_times = []
         isos = []
@@ -51,7 +61,7 @@ if __name__ == "__main__":
             isos.append(row['iso'])
         # labels should be every other exposure time, so that the contact sheet is not too cluttered
         labels = ["File Name", "Exposure Time", "ISO"]
-        tex.generate_table([file_names, exposure_times, isos], labels=labels, output_path=f"{output_path}01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
+        tex.generate_table([file_names, exposure_times, isos], labels=labels, output_path=f"{output_path}{light_types[lighting]}{cloudy_set}_01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
 
         raws = analyze._list_raw_files(path_to_images)
 
@@ -80,12 +90,27 @@ if __name__ == "__main__":
         analyze.bayer_mosaic(raws[0])
         img.assert_one_camera(raws)
         for i in image_paths:
-            analyze.histogram(i, output_path, camera=cam)
+            analyze.histogram(i, output_path, question='01', camera=cam)
 
         # histogram the raw values to look for a spike in the upper half
 
         # # Problem 2
         # print(f"\n**** Problem 2 ****")
+        '''
+        Convert one capture to linear color without demosaicing it. Subtract the black level, divide
+        by the span from black up to the saturation value you measured in item 1, and then take each
+        2 by 2 block of the mosaic to one pixel of a quarter resolution image, using the red site,
+        the mean of the two green sites, and the blue site. No interpolation belongs in a measurement,
+        and this costs you nothing because a patch is thousands of pixels across. Read the mosaic
+        order from the file rather than assuming it is RGGB; phones differ, and a rotated pattern
+        will swap your red and blue channels without producing any other sign that something is wrong.
+
+        Deliverable: The quarter resolution image displayed, and a statement of the CFA pattern, the
+        black level, and the saturation value you used.
+        '''
+        # 1. Convert to linear light
+        # linear = img.to_linear_light(raws[0])
+        # 2. Resize down 25% by sampling the 2x2 blocks to one pixel
 
         # # Problem 3
         # print(f"\n**** Problem 3 ****")

@@ -4,6 +4,7 @@ import rawpy
 import tifffile
 import struct
 import numpy as np
+import pandas as pd
 
 # Written by Claude Sonnet 5.5
 
@@ -146,7 +147,7 @@ def _to_float(value):
 
 
 def raw_metadata(path):
-    """Return a dict of exposure time, ISO, black level and camera for one raw file.
+    """Return a pandas series of exposure time, ISO, black level and camera for one raw file.
 
     Keys: file, camera, exposure_s, iso, black_levels (per channel, as stored
     in the file), white_level, bayer (color order of the 2x2 tile), shape.
@@ -185,9 +186,9 @@ def raw_metadata(path):
         except Exception:
             bayer = None
 
-    return dict(file=path.name, camera=camera or None, exposure_s=exposure,
+    return pd.Series(dict(file=path.name, camera=camera or None, exposure_s=exposure,
                 iso=int(iso) if iso is not None else None,
-                black_levels=black, white_level=white, bayer=bayer, shape=shape)
+                black_levels=black, white_level=white, bayer=bayer, shape=shape))
 
 
 def _format_exposure(seconds):
@@ -212,8 +213,9 @@ def get_image_paths(target, suffixes=RAW_SUFFIXES):
     return paths
 
 
-def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
-    """Print a table of metadata for one raw file or every raw file under a directory.
+def print_raw_metadata(target, df, suffixes=RAW_SUFFIXES):
+# def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
+    """Print and return a pandas table of metadata for one raw file or every raw file under a directory.
 
     Ends with a summary of the distinct (camera, ISO) combinations found, so a
     mixed-ISO folder is obvious. Returns the list of metadata dicts.
@@ -234,10 +236,14 @@ def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
     for p in paths:
         try:
             m = raw_metadata(p)
+            # df.loc[len(df)] = m
         except Exception as exc:
             print(f"{p.name:28s} could not read: {exc}")
             continue
-        rows.append(m)
+        # unpack the pandas series m as a dictionary and append it to the rows list
+        rows.append(m.to_dict())
+        # add the pandas series m to the end of the pandas dataframe df
+        df.loc[len(df)] = m
         print(f"{m['file']:28s} {_format_exposure(m['exposure_s']):>10s} "
               f"{str(m['iso']) if m['iso'] is not None else '?':>5s}  "
               f"{str(m['black_levels']):26s} {m['white_level']:>6d} "
@@ -252,7 +258,7 @@ def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
     for (camera, iso), n in sorted(combos.items(), key=lambda kv: (str(kv[0][0]), kv[0][1] or 0)):
         print(f"  {n:3d} x ISO {iso if iso is not None else '?'}  {camera or '?'}")
 
-    return rows
+    return rows, df
 
 def green_patch(path, size=128, which=0):
     """Center size x size patch of one green plane of a raw file.
@@ -289,3 +295,27 @@ def channel_means(path):
     means = [float(image[colors == c].mean()) for c in range(4)]
     labels = [desc[c] if desc.index(desc[c]) == c else desc[c] + "2" for c in range(4)]
     return means, labels
+
+
+def to_linear_light(raw_img, black_levels, saturation_level):
+    """Convert a raw image to linear light in the range 0.0 to 1.0.
+
+    Subtracts the black level per channel, divides by the span from black to
+    white, and returns the linearized image as a float array.
+    """
+    if len(black_levels) != 4:
+        raise ValueError(f"Expected 4 black levels, got {len(black_levels)}")
+    if saturation_level <= max(black_levels):
+        raise ValueError(f"Saturation level {saturation_level} must be greater than max black level {max(black_levels)}")
+
+    # Create a copy of the raw image to avoid modifying the original
+    linear_img = raw_img.astype(float).copy()
+
+    # Subtract the black level per channel
+    for c in range(4):
+        linear_img[raw_img == c] -= black_levels[c]
+
+    # Divide by the span from black to saturation
+    linear_img /= (saturation_level - max(black_levels))
+
+    return linear_img

@@ -126,7 +126,7 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tNum Chnls: {num_channels}")
 
 
-def histogram(img_path, output, camera=None, SHOW=False):
+def histogram(img_path, output, question=None, camera=None, SHOW=False):
     ### Numpy approach; could also use OpenCV
     file_name = os.path.basename(img_path)
     print(f"\tHistogram analysis for {file_name}.")
@@ -156,6 +156,7 @@ def histogram(img_path, output, camera=None, SHOW=False):
         colors = np.asarray([red_arr, grn2_arr, blue_arr, grn1_arr])
         color_names = np.asarray(['Red', 'Grn2', 'Blue', 'Grn1'])
 
+        # compare np.max to the declared white level
         exif_white_level = raw.white_level
         max_intensity = 0
         for color, name in zip(colors, color_names):
@@ -164,7 +165,6 @@ def histogram(img_path, output, camera=None, SHOW=False):
                 max_intensity = brightest
             # print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
             print(f"\t\tWhite level[{exif_white_level}] is {'>=' if exif_white_level >= brightest else '<'} {name} channel max: {brightest}.")
-
 
         # per channel, flatten the array and call np.bincount (if int values)
         color_means = []
@@ -177,7 +177,9 @@ def histogram(img_path, output, camera=None, SHOW=False):
             bins_by_color.append(binned_count)
             print(f"\t\t{str(name).upper()}")
             print(f"\t\t\tMean Intensity: {avg}")
+            # np.argmax to find the tallest spike
             print(f"\t\t\tHighest occupied value: {np.max(np.nonzero(binned_count))}")
+            # np.nonzero to find the highest bin with non-zero count
             print(f"\t\t\tMost common intensity: {np.max(np.argmax(binned_count))}")
 
         # plot one histogram with all colors together
@@ -185,14 +187,7 @@ def histogram(img_path, output, camera=None, SHOW=False):
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_xlabel('Intensity')
         ax.set_ylabel('Count')
-        ax.set_title('Histogram of RAW Image Intensities')
-        # set x-axis to show only top some% of the intensities
-        some = 0.05
-        top_some_percent = max_intensity - int(max_intensity * some)
-        ax.set_xlim([top_some_percent, int(max_intensity * 1.01)])
-        # set y-axis upper limit to the max of what is in the upper some% of the intensities
-        ax.set_ylim([0, max([np.max(binned_count[top_some_percent:]) for binned_count in bins_by_color]) * 1.1])
-
+        ax.set_title('Full Histogram of RAW Image Intensities')
         for binned_count, name in zip(bins_by_color, color_names):
             ax.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
         ax.legend()
@@ -201,15 +196,33 @@ def histogram(img_path, output, camera=None, SHOW=False):
         if SHOW:
             plt.show()
         if SAVE_PLOTS:
-            title=f'historam_of_{os.path.splitext(file_name)[0]}'
+            title=f'{question+'_' if question else ''}full_histogram_of_{os.path.splitext(file_name)[0]}'
             fig.savefig(f"{output}{title}.png")
 
-        # compare np.max to the declared white level
 
 
         # do another plot of the upper 1-5% of the intensities
-        # np.argmax to find the tallest spike
-        # np.nonzero to find the highest bin with non-zero count
+        some = 0.05
+        fig_top, ax_top = plt.subplots(figsize=(10, 6))
+        ax_top.set_xlabel('Intensity')
+        ax_top.set_ylabel('Count')
+        ax_top.set_title(f'Top {some*100}% Histogram of RAW Image Intensities')
+        # set x-axis to show only top some% of the intensities
+        top_some_percent = max_intensity - int(max_intensity * some)
+        ax_top.set_xlim([top_some_percent, int(max_intensity * 1.01)])
+        # set y-axis upper limit to the max of what is in the upper some% of the intensities
+        ax_top.set_ylim([0, max([np.max(binned_count[top_some_percent:]) for binned_count in bins_by_color]) * 1.1])
+
+        for binned_count, name in zip(bins_by_color, color_names):
+            ax_top.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
+        ax_top.legend()
+
+        plt.tight_layout()
+        if SHOW:
+            plt.show()
+        if SAVE_PLOTS:
+            title=f'{question+'_' if question else ''}top_{int(some*100)}_percent_histogram_of_{os.path.splitext(file_name)[0]}'
+            fig_top.savefig(f"{output}{title}.png")
 
 
 def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=False):
