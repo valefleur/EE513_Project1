@@ -297,25 +297,3 @@ def channel_means(path):
     return means, labels
 
 
-def to_linear_light(raw_img, black_levels, saturation_level):
-    """Convert a raw image to linear light in the range 0.0 to 1.0.
-
-    Subtracts the black level per channel, divides by the span from black to
-    white, and returns the linearized image as a float array.
-    """
-    if len(black_levels) != 4:
-        raise ValueError(f"Expected 4 black levels, got {len(black_levels)}")
-    if saturation_level <= max(black_levels):
-        raise ValueError(f"Saturation level {saturation_level} must be greater than max black level {max(black_levels)}")
-
-    # Create a copy of the raw image to avoid modifying the original
-    linear_img = raw_img.astype(float).copy()
-
-    # Subtract the black level per channel
-    for c in range(4):
-        linear_img[raw_img == c] -= black_levels[c]
-
-    # Divide by the span from black to saturation
-    linear_img /= (saturation_level - max(black_levels))
-
-    return linear_img

@@ -126,7 +126,7 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tNum Chnls: {num_channels}")
 
 
-def histogram(img_path, output, question=None, camera=None, SHOW=False):
+def histogram(img_path, output, question=None, SHOW=False):
     ### Numpy approach; could also use OpenCV
     file_name = os.path.basename(img_path)
     print(f"\tHistogram analysis for {file_name}.")
@@ -159,8 +159,11 @@ def histogram(img_path, output, question=None, camera=None, SHOW=False):
         # compare np.max to the declared white level
         exif_white_level = raw.white_level
         max_intensity = 0
+        color_saturations = []
+
         for color, name in zip(colors, color_names):
             brightest = np.max(color)
+            color_saturations.append(brightest)
             if max_intensity < brightest:
                 max_intensity = brightest
             # print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
@@ -173,7 +176,7 @@ def histogram(img_path, output, question=None, camera=None, SHOW=False):
             brightest = np.max(color)
             avg = np.mean(color)
             color_means.append(avg)
-            binned_count = np.bincount(color.flatten(), minlength=max_intensity)
+            binned_count = np.bincount(color.flatten(), minlength=raw.white_level+1)
             bins_by_color.append(binned_count)
             print(f"\t\t{str(name).upper()}")
             print(f"\t\t\tMean Intensity: {avg}")
@@ -187,7 +190,7 @@ def histogram(img_path, output, question=None, camera=None, SHOW=False):
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_xlabel('Intensity')
         ax.set_ylabel('Count')
-        ax.set_title('Full Histogram of RAW Image Intensities')
+        ax.set_title(f'Full Histogram of RAW Image Intensities for {os.path.splitext(file_name)[0]}')
         for binned_count, name in zip(bins_by_color, color_names):
             ax.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
         ax.legend()
@@ -199,14 +202,31 @@ def histogram(img_path, output, question=None, camera=None, SHOW=False):
             title=f'{question+'_' if question else ''}full_histogram_of_{os.path.splitext(file_name)[0]}'
             fig.savefig(f"{output}{title}.png")
 
-
-
         # do another plot of the upper 1-5% of the intensities
         some = 0.05
+        # need to find the bin with the highest count of all colors in the top some% of the intensities to find the saturation point
+
+
+        # for each color channel, find the highest bin with non-zero count in the top some% of the intensities
+        # then find the max of those values to find the saturation point for the plot
+        saturation_points = []
+        for binned_count, name in zip(bins_by_color, color_names):
+            occupied = np.flatnonzero(binned_count)
+            if occupied.size == 0:
+                continue
+            top = int(occupied[-1])               # highest occupied bin for this channel
+            n_top = int(binned_count[top])        # pixels sitting exactly there
+            frac = n_top / binned_count.sum()     # fraction of this channel's pixels
+            print(f"\t\t{name}: top value {top}, {n_top} px there ({frac*100:.4f}% of channel)")
+            saturation_points.append((top, n_top, frac))
+        # the singular saturation point is the max of the top values across all channels
+        saturation_point = max([sp[0] for sp in saturation_points])
+        print(f"\t\tOverall saturation point: {saturation_point}")
+
         fig_top, ax_top = plt.subplots(figsize=(10, 6))
         ax_top.set_xlabel('Intensity')
         ax_top.set_ylabel('Count')
-        ax_top.set_title(f'Top {some*100}% Histogram of RAW Image Intensities')
+        ax_top.set_title(f'Top {some*100}% Histogram of RAW Image Intensities for {os.path.splitext(file_name)[0]}')
         # set x-axis to show only top some% of the intensities
         top_some_percent = max_intensity - int(max_intensity * some)
         ax_top.set_xlim([top_some_percent, int(max_intensity * 1.01)])
@@ -223,6 +243,8 @@ def histogram(img_path, output, question=None, camera=None, SHOW=False):
         if SAVE_PLOTS:
             title=f'{question+'_' if question else ''}top_{int(some*100)}_percent_histogram_of_{os.path.splitext(file_name)[0]}'
             fig_top.savefig(f"{output}{title}.png")
+
+    return saturation_point
 
 
 def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=False):
@@ -305,9 +327,12 @@ def board_object_points():
     return objp
 
 def _list_raw_files(path_to_raws):
-    raw_file_paths = sorted(os.fspath(i) for i in Path(path_to_raws).iterdir() if _is_raw(i))
-    print(f"There are {len(raw_file_paths)} RAW files.")
-    return raw_file_paths
+    """
+    Given a path to a directory, return a sorted list of all the RAW files in that directory.
+    """
+    raw_files = sorted(os.fspath(i) for i in Path(path_to_raws).iterdir() if _is_raw(i))
+    # print(f"There are {len(raw_files)} RAW files.")
+    return raw_files
 
 
 def contact_sheet(image_paths, camera=None, output=None, question=None, labels=None, SHOW=False):
@@ -316,7 +341,7 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
     HEIGHT = 100
     WIDTH = 100
     thumbs = []
-    print(f'image_paths[0]: {image_paths[0]}')
+    # print(f'image_paths[0]: {image_paths[0]}')
     for i in image_paths:
         # print(f'\tOpening {i}')
         img, name = _open_image(i)

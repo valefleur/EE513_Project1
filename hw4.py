@@ -3,12 +3,41 @@ import os
 
 import numpy as np
 import pandas as pd
+import rawpy
 import psu_imaging as psu
+import matplotlib.pyplot as plt
+
 import my_library.analyze as analyze
 import my_library.image_metadata as img
 import my_library.photon_transfer_curve as ptc
 import my_library.linear_light as ll
 import my_library.latex_formatter as tex
+
+def plot_two_images(first, second, first_title, second_title, save_path, first_color=None, second_color=None, SHOW=False):
+    fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
+    ax[0].set_title(first_title)
+    if first_color:
+        ax[0].imshow(first, cmap=first_color)
+    else:
+        ax[0].imshow(first)
+    ax[0].xaxis.tick_top()
+    ax[0].set_xlabel('Columns')
+    ax[0].set_ylabel('Rows')
+
+    ax[1].set_title(second_title)
+    if second_color:
+        ax[1].imshow(second, cmap=second_color)
+    else:
+        ax[1].imshow(second)
+    ax[1].xaxis.tick_top()
+    ax[1].set_xlabel('Columns')
+    ax[1].set_ylabel('Rows')
+
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    fig.savefig(save_path)
+
 
 if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
@@ -45,6 +74,7 @@ if __name__ == "__main__":
         if lighting == 'cloudy':
             on_cloudy_set = on_cloudy_set + 1
         cloudy_set = f'set{on_cloudy_set}/' if (lighting == 'cloudy') else ''
+        set_output_path = f"{output_path}{light_types[lighting]}{cloudy_set}"
 
         img_data = pd.DataFrame(columns=['file', 'camera', 'exposure_s', 'iso', 'black_levels', 'white_level', 'bayer', 'shape'])
 
@@ -61,15 +91,17 @@ if __name__ == "__main__":
             isos.append(row['iso'])
         # labels should be every other exposure time, so that the contact sheet is not too cluttered
         labels = ["File Name", "Exposure Time", "ISO"]
-        tex.generate_table([file_names, exposure_times, isos], labels=labels, output_path=f"{output_path}{light_types[lighting]}{cloudy_set}_01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
+        tex.generate_table([file_names, exposure_times, isos], labels=labels, output_path=f"{set_output_path}01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
 
         raws = analyze._list_raw_files(path_to_images)
 
-        image_paths = img.get_image_paths(path_to_images)
+        image_paths = img.get_image_paths(path_to_images) # TODO ensure it returns the order expected by the dataframe, or sort it to match raws
 
+        first_img = 0
 
         # Problem 1
-        print(f"\n**** Problem 1 ****")
+        problem = "01"
+        print(f"\n**** Problem {problem} ****")
         '''
         Inventory your captures and confirm that every one of them is a Bayer raw file from the same
         camera, and that the ISO and exposure time are identical within each round. Then check every
@@ -86,16 +118,23 @@ if __name__ == "__main__":
         lens_id assertion from the Project 1 page passing across all of them, the raw value at which
         your files actually saturate, and the fraction of each frame that reaches it.
         '''
-        analyze.contact_sheet(raws, camera=cam, output=output_path, question="01", labels=exposure_times)
-        analyze.bayer_mosaic(raws[0])
+        analyze.contact_sheet(raws, camera=cam, output=set_output_path, question=problem, labels=exposure_times)
+        analyze.bayer_mosaic(raws[first_img])
         img.assert_one_camera(raws)
+        sat_per_img = []
         for i in image_paths:
-            analyze.histogram(i, output_path, question='01', camera=cam)
+            saturation_point = analyze.histogram(i, set_output_path, question=problem)
+            sat_per_img.append(saturation_point)
+
+        # add the saturation to the dataframe
+        img_df['saturation_level'] = sat_per_img
 
         # histogram the raw values to look for a spike in the upper half
 
-        # # Problem 2
-        # print(f"\n**** Problem 2 ****")
+        # Problem 2
+        problem = "02"
+        print(f"\n**** Problem {problem} ****")
+        print(f'HEAD:\n{img_df.head()}')
         '''
         Convert one capture to linear color without demosaicing it. Subtract the black level, divide
         by the span from black up to the saturation value you measured in item 1, and then take each
@@ -108,20 +147,35 @@ if __name__ == "__main__":
         Deliverable: The quarter resolution image displayed, and a statement of the CFA pattern, the
         black level, and the saturation value you used.
         '''
-        # 1. Convert to linear light
-        # linear = img.to_linear_light(raws[0])
-        # 2. Resize down 25% by sampling the 2x2 blocks to one pixel
+        with rawpy.imread(str(raws[first_img])) as raw:
+            raw_img = raw.raw_image_visible
+            # 1. Convert to linear light
+            black = img_df['black_levels'][first_img][0]
+            saturation = img_df['saturation_level'][first_img]
+            # linear = ll.raw_to_linear_light(raw_img, black_levels=img_df['black_levels'][first_img], saturation_level=img_df['white_level'][first_img]) # WRONG, use saturation level instead of white level
+            linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=saturation)
+
+            # 2. Resize down 25% by sampling the 2x2 blocks to one pixel
+            # using the red site, the mean of the two green sites, and the blue site
+            # my camera's CFA pattern comes out to BGGR, so the red site is at (1, 1), the green sites are at (0, 1) and (1, 0), and the blue site is at (0, 0)
+            quarter = ll.quarter_rgb(linear, pattern=raw.raw_pattern, color_desc=raw.color_desc)
+
+            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {img_df['file'][first_img]}', f'Quarter resolution linear light image from {img_df['file'][first_img]}', f"{set_output_path}{problem}_linear_light.png", first_color='gray', second_color=None, SHOW=False)
+
 
         # # Problem 3
-        # print(f"\n**** Problem 3 ****")
-        #The black level per channel from the iso64_dark files, the mean of your shortest dark frames in digital numbers
-        # dark_raws = analyze._list_raw_files(iso64_dark)
-        # dark_metadata = [img.raw_metadata(r) for r in dark_raws]
-        # black_levels = [m['black_levels'] for m in dark_metadata]
-        # tex.generate_table([black_levels], labels=[f"Black Levels (per channel)"], output_path=f"{output_path}03_black_levels.txt", caption=f"Black Levels for {cam} images")
-        # mean_black_levels = [sum(b) / len(b) for b in zip(*black_levels)]
-        # print(f"Mean black levels: {mean_black_levels}")
+        # problem = "03"
+        # print(f"\n**** Problem {problem} ****")
 
-        # ptc.dark_frame_stats(iso64_dark, K=0.256)
+
+
+        # # Problem 3
+        # problem = "03"
+        # print(f"\n**** Problem {problem} ****")
+
+
+        # # Problem 3
+        # problem = "03"
+        # print(f"\n**** Problem {problem} ****")
 
 

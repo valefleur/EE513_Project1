@@ -85,3 +85,35 @@ def plot_reduction(res, plot_path=None, title=""):
     if plot_path:
         fig.savefig(plot_path, dpi=150)
     return fig
+
+
+def raw_to_linear_light(raw_img, black_level, saturation_level):
+    """Convert a raw image to linear light in the range 0.0 to 1.0.
+
+    Subtracts the black level, divides by the span from black to
+    white, and returns the linearized image as a float array.
+    """
+
+    return np.clip((raw_img.astype(float) - black_level) / (saturation_level - black_level), 0, 1)
+
+
+def quarter_rgb(linear, pattern, color_desc):
+    """
+    2x2 mosaic -> half-width, half-height RGB. No interpolation.
+    Return a quarter-resolution RGB image from a 2x2 mosaic.
+    """
+    desc = color_desc.decode() if isinstance(color_desc, bytes) else color_desc
+    h, w = (linear.shape[0] // 2) * 2, (linear.shape[1] // 2) * 2
+    linear = linear[:h, :w]
+    out = np.zeros((h // 2, w // 2, 3))
+    greens = []
+    for r in range(2):
+        for c in range(2):
+            plane = linear[r::2, c::2]
+            ch = desc[pattern[r, c]]
+            if ch == "R": out[..., 0] = plane
+            elif ch == "B": out[..., 2] = plane
+            else: greens.append(plane)
+    out[..., 1] = np.mean(greens, axis=0)
+    return out
+
