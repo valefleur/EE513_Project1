@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import special
 
-# Note: All code in this file borrowd from Prof. James McNames' 03_mtf_cascade.ipynb and modified as needed for homework 2.
+# Note: All code in this file borrowed from Prof. James McNames' 03_mtf_cascade.ipynb and 04_measure_your_camera.ipynb and modified as needed for homework 2.
 
 plt.rcParams.update({"figure.dpi": 110, "font.size": 10,
                      "axes.grid": True, "grid.alpha": 0.3})
@@ -42,6 +42,11 @@ def get_diffraction_mtf(nu):
 
 def get_gaussian_mtf(nu, sigma_um):
     return np.exp(-2 * (np.pi * sigma_um * np.asarray(nu)) ** 2)
+
+
+def analytic_gaussian_mtf50(sigma):
+    """Return the MTF50 of a Gaussian PSF with standard deviation `sigma` in pixels."""
+    return np.sqrt(np.log(2) / (2 * np.pi ** 2 * sigma ** 2))
 
 
 def mtf50(freq, mtf):
