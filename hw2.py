@@ -51,7 +51,7 @@ if __name__ == "__main__":
         print(f"\n**** Problem {problem_num} ****")
         predicted_mtf50_in_um = predicted_mtf50 / 1000
         predicted_mtf50_in_pixels = predicted_mtf50_in_um * mtf.PITCH_UM * 2 # multiply by 2 since we are using the green-plane
-        print(f"Predicted system MTF50 is:\n\t{predicted_mtf50_in_um:.4f} cycles/um\n\t{predicted_mtf50:.1f}  cycles/mm\n\t{predicted_mtf50_in_pixels:.4f} cycles/pixel (green-plane)")
+        print(f"Predicted system MTF50 is:\n\t{predicted_mtf50_in_um:.4f} cycles/um\n\t{predicted_mtf50:.1f}  cycles/mm\n\t{predicted_mtf50_in_pixels:.4f} cycles per green pixel")
 
 
     # Problem 9
@@ -92,9 +92,6 @@ if __name__ == "__main__":
     if not np.allclose(generated_slanted_edge, expected_edge_cdf, atol=1e-2):
         print(f"WARNING: Generated slanted edge does not match expected edge from Gaussian PSF with sigma = {sigma}.")
 
-    # TODO fix the approx. 0.5 px offset between the generated slanted edge and the expected edge
-    # This won't affect the MTF because a constant shift in phase term in the frequency domain, which does not affect the MTF because it is a magnitude in the frequency domain (divided by the constant H(0,0) term).
-
     fig, ax = plt.subplots(figsize=(3.2, 5))
     ax.imshow(generated_slanted_edge, cmap="gray")
     ax.contour(d, levels=[0], colors="red", linewidths=1.5, linestyles="--", label="Analytic Edge Center")
@@ -121,28 +118,44 @@ if __name__ == "__main__":
     # Problem 10
     problem_num = "10"
     print(f"\n**** Problem {problem_num} ****")
+    freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(generated_slanted_edge)
 
+    fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
 
-    # fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
+    axes[0].plot(esf_x, esf, ".", ms=2.5, color="blue")
+    axes[0].set_xlim(-8, 8); axes[0].set_title("Edge spread function")
+    axes[0].set_xlabel("distance from edge (px)")
 
-    # axes[0].plot(esf_x, esf, ".", ms=2.5, color=psu.PSU_BLUE)
-    # axes[0].set_xlim(-8, 8); axes[0].set_title("Edge spread function")
-    # axes[0].set_xlabel("distance from edge (px)")
+    axes[1].plot(esf_x, np.gradient(esf, esf_x), color="green", lw=1.5)
+    axes[1].set_xlim(-8, 8); axes[1].set_title("Line spread function ($\\frac{\\mathrm{\\delta}\\text{ESF}}{\\mathrm{\\delta}}$)")
+    axes[1].set_xlabel("distance from edge (px)")
 
-    # axes[1].plot(esf_x, np.gradient(esf, esf_x), color=psu.PSU_GREEN, lw=1.5)
-    # axes[1].set_xlim(-8, 8); axes[1].set_title("Line spread function")
-    # axes[1].set_xlabel("distance from edge (px)")
+    axes[2].plot(freq, mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
+    axes[2].plot(freq, np.exp(-2 * np.pi ** 2 * sigma ** 2 * freq ** 2), "--", lw=1.5,
+                color="orange", label="analytic")
+    axes[2].axhline(0.5, color="lightgray", ls=":")
+    axes[2].axvline(0.5, color="#555555", ls="--", lw=1.2)
+    axes[2].text(0.51, 0.9, "Nyquist", fontsize=8.5, color="#555555")
+    axes[2].set_xlim(0, 0.75); axes[2].set_ylim(0, 1.05)
+    axes[2].set_xlabel("cycles per pixel"); axes[2].set_title(r"MTF ($\frac{|\mathcal{F}(LSF)|}{\mathrm{H}(0,0)}$)")
+    axes[2].legend(fontsize=9)
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    fig.savefig(f"{output}/10_ESF_LSF_MTF.png")
 
-    # axes[2].plot(freq, mtf, lw=2, color=psu.PSU_FOREST, label="measured")
-    # axes[2].plot(freq, np.exp(-2 * np.pi ** 2 * SIGMA ** 2 * freq ** 2), "--", lw=1.5,
-    #             color=psu.PSU_WARM, label="analytic")
-    # axes[2].axhline(0.5, color=psu.PSU_GRAY, ls=":")
-    # axes[2].axvline(0.5, color="#555555", ls="--", lw=1.2)
-    # axes[2].text(0.51, 0.9, "Nyquist", fontsize=8.5, color="#555555")
-    # axes[2].set_xlim(0, 0.75); axes[2].set_ylim(0, 1.05)
-    # axes[2].set_xlabel("cycles per pixel"); axes[2].set_title("MTF")
-    # axes[2].legend(fontsize=9)
-    # plt.tight_layout(); plt.show()
+    # Problem 11
+    problem_num = "11"
+    print(f"\n**** Problem {problem_num} ****")
+    # Print out the measured MTF50 from the generated slanted edge, and compare to the analytic MTF50.
+    # And the percent error between the two.
+    measured_mtf50 = mtf.mtf50(freq, mtf_curve)
+    analytic_mtf50 = mtf.analytic_gaussian_mtf50(sigma)
+    percent_error = (measured_mtf50 - analytic_mtf50) / analytic_mtf50 * 100
+    print(f"Measured MTF50 from generated slanted edge: {measured_mtf50:.4f} cycles per pixel")
+    print(f"Analytic MTF50 from Gaussian PSF with sigma = {sigma}: {analytic_mtf50:.4f} cycles per pixel")
+    print(f"Percent error: {percent_error:.2f}%")
+
 
     if not SPEED_UP:
         # Problem 12

@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import special
+import cv2 as cv
 
 # Note: All code in this file borrowed from Prof. James McNames' 03_mtf_cascade.ipynb and 04_measure_your_camera.ipynb and modified as needed for homework 2.
 
@@ -8,9 +9,9 @@ plt.rcParams.update({"figure.dpi": 110, "font.size": 10,
                      "axes.grid": True, "grid.alpha": 0.3})
 
 # ----- your camera -------------------------------------------------------
-F_MM = 6.765        # focal length, mm
-N = 1.78            # f-number
-PITCH_UM = 2.42     # pixel pitch, micrometres
+F_MM = 7.02         # focal length, mm
+N = 1.80            # f-number of iPhone 16 Pro Max camera lens
+PITCH_UM = 2.434    # pixel pitch, micrometres of iPhone 16 Pro Max all pixels
 LAMBDA_UM = 0.550   # green light, micrometres
 # -------------------------------------------------------------------------
 
@@ -31,6 +32,7 @@ print("not on sensor size, not on pixel count.")
 
 def get_pixel_mtf(nu):
     '''A square pixel integrates over its area, so its MTF is |sinc(nu * pitch)|.'''
+    #TODO I think this should account for if we are doing green-plane vs full sensor...
     return np.abs(np.sinc(np.asarray(nu) * PITCH_UM))     # np.sinc is sin(pi x)/(pi x)
 
 
@@ -69,6 +71,56 @@ def mtf50(freq, mtf):
     i = below[0]
     # Linearly interpolate to find the approximate frequency at which the MTF hits 50% contrast.
     return float(freq[i - 1] + (mtf[i - 1] - 0.5) * (freq[i] - freq[i - 1]) / (mtf[i - 1] - mtf[i]))
+
+
+def edge_centroids(roi, window=8.0, smooth=1.5):
+    """Sub-pixel edge position per row, from a windowed derivative centroid."""
+    roi = np.asarray(roi, dtype=float)
+
+    # Coarse location from a smoothed copy. Smoothing locates the edge; it never
+    # touches the data we build the edge spread function from.
+    smoothed = cv.GaussianBlur(roi, (0, 0), sigmaX=smooth, sigmaY=0.01)
+    coarse = np.argmax(np.abs(np.diff(smoothed, axis=1)), axis=1) + 0.5
+
+    deriv = np.abs(np.diff(roi, axis=1))
+    x = np.arange(deriv.shape[1]) + 0.5
+    weight = np.where(np.abs(x[None, :] - coarse[:, None]) <= window, deriv, 0.0)
+
+    total = weight.sum(axis=1)
+    good = total > 1e-9
+    centers = np.full(roi.shape[0], np.nan)
+    centers[good] = (weight[good] * x).sum(axis=1) / total[good]
+    return centers
+
+
+def slanted_edge_mtf(roi, bin_width=0.25, window=8.0):
+    """Returns (freq in cycles/px, mtf, esf_x, esf)."""
+    roi = np.asarray(roi, dtype=float)
+    rows = np.arange(roi.shape[0])
+
+    centers = edge_centroids(roi, window=window)
+    ok = np.isfinite(centers)
+    slope, intercept = np.polyfit(rows[ok], centers[ok], 1)
+    fitted = slope * rows + intercept
+
+    cols = np.arange(roi.shape[1])
+    distance = (cols[None, :] - fitted[:, None]).ravel()
+    values = roi.ravel()
+
+    edges = np.arange(distance.min(), distance.max() + bin_width, bin_width)
+    idx = np.clip(np.digitize(distance, edges) - 1, 0, len(edges) - 2)
+    total = np.bincount(idx, weights=values, minlength=len(edges) - 1)
+    count = np.bincount(idx, minlength=len(edges) - 1)
+    keep = count > 0
+    esf = total[keep] / count[keep]
+    esf_x = (edges[:-1] + bin_width / 2)[keep]
+
+    lsf = np.gradient(esf, esf_x)
+    lsf = lsf - np.median(np.concatenate([lsf[:5], lsf[-5:]]))
+    lsf = lsf * np.hanning(len(lsf))
+
+    spectrum = np.abs(np.fft.rfft(lsf))
+    return np.fft.rfftfreq(len(lsf), d=bin_width), spectrum / spectrum[0], esf_x, esf, lsf, fitted, slope, intercept
 
 
 def main(output=None):
@@ -114,7 +166,7 @@ def main(output=None):
     # ax.set_xlim(0, spatial_cutoff_freq * margin)
     ax.set_ylim(0, 1 * margin)
     ax.legend(fontsize=9, frameon=False)
-    ax.set_title("$\mathrm{MTF}$ of the iPhone 16 Imaging System")
+    ax.set_title(r"$\mathrm{MTF}$ of the iPhone 16 Imaging System")
     # add a subtitle with the MTF50 of the system
     ax.text(0.5, 0.94, f"Analytical System MTF50 = {mtf50_freq:.1f} cycles/mm", ha="center", va="bottom", transform=ax.transAxes, fontsize=9)
     plt.tight_layout()
