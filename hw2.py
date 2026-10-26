@@ -41,26 +41,25 @@ if __name__ == "__main__":
     # K, distortion, corners = analyze.calibrate_camera(calib_imgs_path, oneoff=straight_lines_img, camera=cam)
 
     # original, undistorted = analyze.undistort(straight_lines_img, K, distortion, corners, cam)
+    sigma = 1.0
+    gen_mtf_curve = None
+
+    # Problem 7
+    problem_num = "07"
+    print(f"\n**** Problem {problem_num} ****")
+    system_mtf_in_um, predicted_mtf50_in_um = mtf.main(output)
 
     if not SPEED_UP:
-        # Problem 7
-        problem_num = "07"
-        print(f"\n**** Problem {problem_num} ****")
-        predicted_mtf50 = mtf.main(output)
-
-
         # Problem 8
         problem_num = "08"
         print(f"\n**** Problem {problem_num} ****")
-        predicted_mtf50_in_um = predicted_mtf50 / 1000
         predicted_mtf50_in_pixels = predicted_mtf50_in_um * mtf.PITCH_UM * 2 # multiply by 2 since we are using the green-plane
-        print(f"Predicted system MTF50 is:\n\t{predicted_mtf50_in_um:.4f} cycles/um\n\t{predicted_mtf50:.1f}  cycles/mm\n\t{predicted_mtf50_in_pixels:.4f} cycles per green pixel")
+        print(f"Predicted system MTF50 is:\n\t{predicted_mtf50_in_um:.4f} cycles/um\n\t{predicted_mtf50_in_um * 1000:.1f}  cycles/mm\n\t{predicted_mtf50_in_pixels:.4f} cycles per green pixel")
 
 
         # Problem 9
         problem_num = "09"
         print(f"\n**** Problem {problem_num} ****")
-        sigma = 1.0
         theta = 5.0
         super_sampling = 8
         rnd_seed = np.random.randint(0, 2**32 - 1)
@@ -121,7 +120,7 @@ if __name__ == "__main__":
         # Problem 10
         problem_num = "10"
         print(f"\n**** Problem {problem_num} ****")
-        freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(generated_slanted_edge)
+        freq, gen_mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(generated_slanted_edge)
 
         fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
 
@@ -133,8 +132,8 @@ if __name__ == "__main__":
         axes[1].set_xlim(-8, 8); axes[1].set_title("Line spread function ($\\frac{\\mathrm{\\delta}\\text{ESF}}{\\mathrm{\\delta}}$)")
         axes[1].set_xlabel("distance from edge (px)")
 
-        axes[2].plot(freq, mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
-        axes[2].plot(freq, np.exp(-2 * np.pi ** 2 * sigma ** 2 * freq ** 2), "--", lw=1.5,
+        axes[2].plot(freq, gen_mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
+        axes[2].plot(freq, mtf.get_analytic_mtf(freq, sigma=sigma), "--", lw=1.5,
                     color="orange", label="analytic")
         axes[2].axhline(0.5, color="lightgray", ls=":")
         axes[2].axvline(0.5, color="#555555", ls="--", lw=1.2)
@@ -152,7 +151,7 @@ if __name__ == "__main__":
         print(f"\n**** Problem {problem_num} ****")
         # Print out the measured MTF50 from the generated slanted edge, and compare to the analytic MTF50.
         # And the percent error between the two.
-        measured_mtf50 = mtf.mtf50(freq, mtf_curve)
+        measured_mtf50 = mtf.mtf50(freq, gen_mtf_curve)
         analytic_mtf50 = mtf.analytic_gaussian_mtf50(sigma)
         percent_error = (measured_mtf50 - analytic_mtf50) / analytic_mtf50 * 100
         print(f"Measured MTF50 from generated slanted edge: {measured_mtf50:.4f} cycles per pixel") # are these green plane pixels? 
@@ -195,10 +194,89 @@ if __name__ == "__main__":
     # Problem 15
     problem_num = "15"
     print(f"\n**** Problem {problem_num} ****")
+    # measure the MTF50 on the central square of each capture in the green plane, and report the
+    # mean and standard deviation of the MTF50 values in both um and cycles per green-plane pixel.
+    mtf50_values_um = []
+    mtf50_values_px = []
+    mtf_curves = []
     for path in raw_slant_paths:
         with rawpy.imread(str(path)) as image:
+            basename = os.path.basename(path).split('.')[0]
             green_img = ll.green_plane_from_raw(image, which_grn=0)
-            # Get a central square of the green_img, 256x256 pixels, centered on the tilted square in the middle.
-            # Take the square starting at row 600 and column 750
-            central_square = green_img[600:856, 750:1006]
-            # center_sq_mtf = mtf.main(central_square, output=output, question=problem_num, show=SHOW)
+            # Get a central square of the green_img, 256x100 pixels, centered on the tilted square in the middle.
+            # Take the square starting at row 600 and column 1120
+            central_square = green_img[600:856, 1120:1220]
+            #plot just the first one to confirm we have an edge
+            if path == raw_slant_paths[0]:
+                fig, ax = plt.subplots(figsize=(6, 5))
+                ax.imshow(central_square, cmap="gray")
+                ax.set_title(f"Central square of green plane from {basename}", fontsize=9.5)
+                ax.xaxis.tick_top()
+                plt.tight_layout()
+                if SHOW:
+                    plt.show()
+                fig.savefig(f"{output}/15_central_square_edge_of_{basename}.png")
+            freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(central_square, real_data=True)
+            mtf50_in_pixels = mtf.mtf50(freq, mtf_curve) # this si already in cycles per green-plane pixel
+            # print the mtf50 in um and cycles per green-plane pixel
+            mtf50_in_um = mtf50_in_pixels / (2 * mtf.PITCH_UM) # divide by 2 because we are using the green-plane, and multiply by pixel pitch in um to get cycles per um
+            mtf50_values_um.append(mtf50_in_um)
+            mtf50_values_px.append(mtf50_in_pixels)
+            mtf_curves.append(mtf_curve)
+            print(f"MTF50 for {basename}: {mtf50_in_um:.4f} cycles per um or {mtf50_in_pixels:.4f} cycles per green-plane pixel")
+
+            # Plot the ESF, LSF, and MTF and save by the basename of the raw file
+            fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
+
+            axes[0].plot(esf_x, esf, ".", ms=2.5, color="blue")
+            axes[0].set_xlim(-8, 8); axes[0].set_title("Edge spread function")
+            axes[0].set_xlabel("distance from edge (px)")
+
+            axes[1].plot(esf_x, np.gradient(esf, esf_x), color="green", lw=1.5)
+            axes[1].set_xlim(-8, 8); axes[1].set_title("Line spread function ($\\frac{\\mathrm{\\delta}\\text{ESF}}{\\mathrm{\\delta}}$)")
+            axes[1].set_xlabel("distance from edge (px)")
+            axes[2].plot(freq, mtf_curve, ':', lw=1, color="red", label=f"measured from {basename}")
+            if gen_mtf_curve:
+                axes[2].plot(freq, gen_mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
+            axes[2].plot(freq, mtf.get_analytic_mtf(freq, sigma=sigma), "--", lw=1.5,
+                        color="orange", label="analytic")
+            axes[2].axhline(0.5, color="lightgray", ls=":")
+            axes[2].axvline(0.5, color="#555555", ls="--", lw=1.2)
+            axes[2].text(0.51, 0.9, "Nyquist", fontsize=8.5, color="#555555")
+            axes[2].set_xlim(0, 0.75); axes[2].set_ylim(0, 1.05)
+            axes[2].set_xlabel("cycles per green-plane pixel"); axes[2].set_title(r"MTF ($\frac{|\mathcal{F}(LSF)|}{\mathrm{H}(0,0)}$)")
+            axes[2].legend(fontsize=9)
+            fig.suptitle(f"ESF, LSF, and MTF for {basename}", fontsize=9.5)
+            # fig.suptitle(f"Measured MTF50 = {mtf50_in_um:.4f} cycles per um or {mtf50_in_pixels:.4f} cycles per green-plane pixel", fontsize=9)
+            plt.tight_layout()
+            if SHOW:
+                plt.show()
+            fig.savefig(f"{output}/15_ESF_LSF_MTF_{basename}.png")
+    # Make an overlay plot of all the mtf_curves
+    cmap = plt.get_cmap("tab20")
+    colors = cmap.colors
+    fig, ax = plt.subplots(figsize=(6, 5))
+    for i, mtf_curve in enumerate(mtf_curves):
+        ax.plot(freq, mtf_curve[:len(freq)], lw=1.5, label=f"{os.path.basename(raw_slant_paths[i]).split('.')[0]}", color=colors[i])
+    if gen_mtf_curve:
+        ax.plot(freq, gen_mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
+    # plot the system_mtf from the analytical MTF of the system
+    # convert system_mtf from cycles per um to cycles per green-plane pixel by multiplying by 2 * mtf.PITCH_UM
+    system_mtf_in_px = system_mtf_in_um * (2 * mtf.PITCH_UM)
+    ax.plot(freq, system_mtf_in_px[:len(freq)], lw=2, color="black", label="system MTF from Problem 7")
+
+    # ax.plot(freq, mtf.get_analytic_mtf(freq, sigma=sigma), "--", lw=1.5,
+    #                         color="orange", label="analytic")
+
+    ax.set_xlabel("cycles per green-plane pixel")
+    ax.set_ylabel("MTF")
+    ax.set_title("Overlay of MTF Curves")
+    ax.set_ylim(0, 1.2)
+    ax.legend(fontsize=9)
+    plt.tight_layout()
+    if SHOW:
+        plt.show()
+    fig.savefig(f"{output}/15_MTF_Overlay.png")
+
+    print(f"\nMean MTF50: {np.mean(mtf50_values_um):.4f} cycles per um or {np.mean(mtf50_values_px):.4f} cycles per green-plane pixel")
+    print(f"Standard deviation: {np.std(mtf50_values_um, ddof=1):.4f} cycles per um or {np.std(mtf50_values_px, ddof=1):.4f} cycles per green-plane pixel")

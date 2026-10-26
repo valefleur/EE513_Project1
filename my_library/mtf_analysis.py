@@ -93,14 +93,16 @@ def edge_centroids(roi, window=8.0, smooth=1.5):
     return centers
 
 
-def slanted_edge_mtf(roi, bin_width=0.25, window=8.0):
+def slanted_edge_mtf(roi, bin_width=0.25, window=8.0, real_data=False):
     """Returns (freq in cycles/px, mtf, esf_x, esf)."""
     roi = np.asarray(roi, dtype=float)
     rows = np.arange(roi.shape[0])
 
     centers = edge_centroids(roi, window=window)
     ok = np.isfinite(centers)
+    # print(f"centers: {centers[ok]}")
     slope, intercept = np.polyfit(rows[ok], centers[ok], 1)
+    print(f"slanted edge slope = {slope:.4f} px/row, intercept = {intercept:.2f} px")
     fitted = slope * rows + intercept
 
     cols = np.arange(roi.shape[1])
@@ -115,6 +117,12 @@ def slanted_edge_mtf(roi, bin_width=0.25, window=8.0):
     esf = total[keep] / count[keep]
     esf_x = (edges[:-1] + bin_width / 2)[keep]
 
+    if real_data:
+        # crop the ESF to the central +/-12px of the edge to avoid edge effects
+        crop = np.abs(esf_x) <= 12
+        esf_x = esf_x[crop]
+        esf = esf[crop]
+
     lsf = np.gradient(esf, esf_x)
     lsf = lsf - np.median(np.concatenate([lsf[:5], lsf[-5:]]))
     lsf = lsf * np.hanning(len(lsf))
@@ -123,8 +131,12 @@ def slanted_edge_mtf(roi, bin_width=0.25, window=8.0):
     return np.fft.rfftfreq(len(lsf), d=bin_width), spectrum / spectrum[0], esf_x, esf, lsf, fitted, slope, intercept
 
 
+def get_analytic_mtf(freq, sigma=1.0):
+    return np.exp(-2 * np.pi ** 2 * sigma ** 2 * freq ** 2)
+
+
 def main(output=None):
-    nu = np.linspace(0, 0.42, 600)                 # cycles per micrometre
+    nu = np.linspace(0, 0.42, 600)    # cycles per micrometre
     lens_mtf = get_diffraction_mtf(nu)# * get_gaussian_mtf(nu, 0.62) # diffraction only
     pixel_mtf = get_pixel_mtf(nu)
     # shake = get_gaussian_mtf(nu, 0.45)
@@ -182,4 +194,4 @@ def main(output=None):
     # print(f"  hand shake         {at(shake):.3f}")
     print(f"  SYSTEM             {at(system_mtf):.3f}   <- the product of the two above curves")
 
-    return mtf50_freq
+    return system_mtf, mtf50_freq / 1000 # return everything in cycles per um
