@@ -2,18 +2,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import special
 import cv2 as cv
+from iphone_specs import F_MM, N, LAMBDA_UM, PITCH_UM
 
 # Note: All code in this file borrowed from Prof. James McNames' 03_mtf_cascade.ipynb and 04_measure_your_camera.ipynb and modified as needed for homework 2.
 
 plt.rcParams.update({"figure.dpi": 110, "font.size": 10,
                      "axes.grid": True, "grid.alpha": 0.3})
-
-# ----- your camera -------------------------------------------------------
-F_MM = 7.02         # focal length, mm
-N = 1.80            # f-number of iPhone 16 Pro Max camera lens
-PITCH_UM = 2.434    # pixel pitch, micrometres of iPhone 16 Pro Max all pixels
-LAMBDA_UM = 0.550   # green light, micrometres
-# -------------------------------------------------------------------------
 
 D_MM = F_MM / N                       # aperture diameter
 CUTOFF = 1.0 / (LAMBDA_UM * N)        # incoherent diffraction cutoff, cycles/um
@@ -187,6 +181,7 @@ def main(output=None):
     plt.show()
     if output is not None:
         fig.savefig(f"{output}/07_mtf_cascade.png", dpi=150)
+    plt.close(fig)
 
     at = lambda curve: np.interp(NYQUIST, nu, curve)
     system_contrast_at_green_nyquist = at(system_mtf)

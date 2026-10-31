@@ -25,6 +25,8 @@ From Apple, the 1× lens is called the [48MP Fusion lens](https://support.apple.
 
 > 48MP Fusion: 24 mm, ƒ/1.78 aperture, second-generation sensor-shift optical image stabilization, 100% Focus Pixels, support for super-high-resolution photos (24MP and 48MP). Also enables 12MP 2× Telephoto: 48 mm, ƒ/1.78 aperture, second-generation sensor-shift optical image stabilization, 100% Focus Pixels.
 
+Additional details from [GSM Arena](https://www.gsmarena.com/apple_iphone_16_pro_max-review-2750p5.php) and [Phone Arena](https://www.phonearena.com/news/iphone-16-camera_id159634).
+
 The photos come out at 12 MP, 24 mm, ƒ/1.78.
 
 ### Capture setup

@@ -37,6 +37,8 @@ def plot_two_images(first, second, first_title, second_title, save_path, first_c
     if SHOW:
         plt.show()
     fig.savefig(save_path)
+    if SHOW:
+        plt.close(fig)
 
 
 if __name__ == "__main__":
@@ -67,6 +69,8 @@ if __name__ == "__main__":
         color_sets = [flor_path, led_path, incadesent_path, f'{cloudy_path}/set1', f'{cloudy_path}/set2', shade_path]
 
     output_path = 'output/hw4/'
+
+    flats = {}
 
     for path_to_images, lighting in zip(color_sets, light_types.keys()):
         print(f"\n\n~*~*~*~*~*~*~*~  Now looking at images taken with {lighting} lighting. ~*~*~*~*~*~*~*~")
@@ -99,6 +103,14 @@ if __name__ == "__main__":
 
         first_img = 0
 
+        # From the output of the histogram data, we know the saturation level is 4095.
+        '''
+        TODO rewrite the loop logic so we look at the saturation levels of all images before
+        starting in on the problems and their calculations to use a global saturation level for
+        the camera.
+        '''
+        SATURATION = 4095
+
         # Problem 1
         problem = "01"
         print(f"\n**** Problem {problem} ****")
@@ -121,13 +133,22 @@ if __name__ == "__main__":
         analyze.contact_sheet(raws, camera=cam, output=set_output_path, question=problem, labels=exposure_times)
         analyze.bayer_mosaic(raws[first_img])
         img.assert_one_camera(raws)
-        sat_per_img = []
+        # max_brightness_per_img = [] # TODO is max_brightness worth keeping?
         for i in image_paths:
-            saturation_point = analyze.histogram(i, set_output_path, question=problem)
-            sat_per_img.append(saturation_point)
+            # print the fraction of each frame at saturation
+            clip_report = analyze.clip_report(i, sat=SATURATION)
+            print(f"\nHistogram analysis for {os.path.basename(i)}:")
+            print(f"\tPercentage of pixels at saturation:")
+            for k, v in clip_report.items():
+                if k != 'spike_ratio':
+                    print(f"\t\t{k}: {v*100:.3f}%")
+            print(f"\t\tSpike ratio: {clip_report['spike_ratio']:.3f}")
+            analyze.histogram(i, set_output_path, question=problem)
+            # max_brightness_point = analyze.histogram(i, set_output_path, question=problem)
+            # max_brightness_per_img.append(max_brightness_point)
 
-        # add the saturation to the dataframe
-        img_df['saturation_level'] = sat_per_img
+        # add the max_brightness to the dataframe
+        # img_df['max_brightness'] = max_brightness_per_img
 
         # histogram the raw values to look for a spike in the upper half
 
@@ -151,9 +172,9 @@ if __name__ == "__main__":
             raw_img = raw.raw_image_visible
             # 1. Convert to linear light
             black = img_df['black_levels'][first_img][0]
-            saturation = img_df['saturation_level'][first_img]
+            # saturation = img_df['max_brightness'][first_img] # Error: don't use max brightness
             # linear = ll.raw_to_linear_light(raw_img, black_levels=img_df['black_levels'][first_img], saturation_level=img_df['white_level'][first_img]) # WRONG, use saturation level instead of white level
-            linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=saturation)
+            linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=SATURATION)
 
             # 2. Resize down 25% by sampling the 2x2 blocks to one pixel
             # using the red site, the mean of the two green sites, and the blue site
@@ -170,24 +191,28 @@ if __name__ == "__main__":
         with rawpy.imread(str(raws[-1])) as raw:
             raw_img = raw.raw_image_visible
             black = img_df['black_levels'][len(img_df)-1][0]
-            saturation = img_df['saturation_level'][len(img_df)-1]
-            white_flat_linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=saturation)
+            # saturation = img_df['max_brightness'][len(img_df)-1] # Error: Don't use max brightness
+            white_flat_linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=SATURATION)
 
             # Determine the center (ideally we'd use the optical axis center principle point, but we don't have that info)
             height, width = white_flat_linear.shape
             print(f'White flat in linear light height: {height}, width: {width}')
-            cx, cy = width // 2, height // 2
-            x = np.arange(width) - cx
-            y = np.arange(height) - cy
+            center_x, center_y = width // 2, height // 2
+            x = np.arange(width) - center_x
+            y = np.arange(height) - center_y
 
             # Calculate the distance squarted from center for each pixel
             xv, yv = np.meshgrid(x, y)
             distance_squared = xv**2 + yv**2
 
+            # Normalize the flat field to its own center and divide, treating each of the three channels separately rather than applying one gray correction.
+            white_flat_linear = white_flat_linear / white_flat_linear[center_y, center_x]
+
             # Calculate cos(theta), but use geometry for easier computation
             # cos(theta) = adjacent / hypotenuse = distance from center / distance from center to pixel
             # cos(theta) = focal length / sqrt(focal_length^2 + distance_squared)
             # That means cos^4(theta) = (focal_length^4) / (focal_length^2 + distance_squared)^2
+            # Come back to this: https://share.google/aimode/CM7eFPRMzH9Wm9pf1
 
 
 

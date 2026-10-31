@@ -146,6 +146,20 @@ def _to_float(value):
         return None
 
 
+def get_optical_center(path):
+    """
+    For now, return the geometric center of the image as (x, y) in subpixels (float).
+    TODO Find an image whose EXIF data includes any data related to the optical
+    center instead of the geometric center and add a try-catch block to attempt
+    to return that data first.
+    """
+    with rawpy.imread(str(path)) as raw:
+        shape = tuple(raw.raw_image_visible.shape)
+        center_x = shape[1] / 2.0
+        center_y = shape[0] / 2.0
+    return center_x, center_y
+
+
 def raw_metadata(path):
     """Return a pandas series of exposure time, ISO, black level and camera for one raw file.
 
@@ -231,7 +245,7 @@ def print_raw_metadata(target, df, suffixes=RAW_SUFFIXES):
         return []
 
     rows = []
-    print(f"{'file':28s} {'exposure':>10s} {'ISO':>5s}  {'black level (per channel)':26s} "
+    print(f"{'file':20s} {'exposure':>10s} {'ISO':>5s}  {'black level (per channel)':26s} "
           f"{'white':>6s} {'bayer':>5s}  camera")
     for p in paths:
         try:

@@ -9,6 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+import iphone_specs as cam_specs
+
 # Transfer functions from Prof. James McNames' psu_imaging.py (EE 513 Introduction to Image Processing).
 import psu_imaging as psu
 
@@ -23,3 +25,11 @@ def capture_edge(sigma=1.0, angle_deg=5.0, h=256, w=128, black_level=psu.BLACK_L
         return blurred
     raw = psu.expose_and_digitize(blurred, np.random.default_rng(seed), exposure=exposure)
     return (raw.astype(float) - black_level) / (white_level - black_level)
+
+
+def cos4_map(h, w, bin_factor=2):
+    """cos^4 falloff for an h x w image binned `bin_factor` from the 4032 x 3024 raw."""
+    f_px = cam_specs.F_MM * 1000 / (cam_specs.PITCH_UM * bin_factor)
+    y, x = np.mgrid[0:h, 0:w]
+    r2 = (x - (w - 1) / 2) ** 2 + (y - (h - 1) / 2) ** 2
+    return (1 + r2 / f_px**2) ** -2

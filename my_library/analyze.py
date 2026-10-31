@@ -126,6 +126,19 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tNum Chnls: {num_channels}")
 
 
+def clip_report(path, sat=4095):
+    """Fraction of pixels at the ceiling (whole frame and per channel), plus a spike ratio."""
+    with rawpy.imread(str(path)) as raw:
+        img = raw.raw_image_visible
+        colors = raw.raw_colors_visible
+        desc = raw.color_desc.decode()
+    hit = img >= sat
+    counts = np.bincount(img.ravel(), minlength=sat + 1)
+    spike = counts[sat] / max(counts[sat - 20:sat].mean(), 1)   # ~0 if nothing clips
+    per = {f"{desc[c]}{c}": hit[colors == c].mean() for c in range(4)}
+    return dict(frame=hit.mean(), spike_ratio=spike, **per)
+
+
 def histogram(img_path, output, question=None, SHOW=False):
     ### Numpy approach; could also use OpenCV
     file_name = os.path.basename(img_path)
@@ -201,27 +214,28 @@ def histogram(img_path, output, question=None, SHOW=False):
         if SAVE_PLOTS:
             title=f'{question+'_' if question else ''}full_histogram_of_{os.path.splitext(file_name)[0]}'
             fig.savefig(f"{output}{title}.png")
+        if SHOW:
+            plt.close(fig)
 
         # do another plot of the upper 1-5% of the intensities
         some = 0.05
         # need to find the bin with the highest count of all colors in the top some% of the intensities to find the saturation point
 
-
-        # for each color channel, find the highest bin with non-zero count in the top some% of the intensities
-        # then find the max of those values to find the saturation point for the plot
-        saturation_points = []
-        for binned_count, name in zip(bins_by_color, color_names):
-            occupied = np.flatnonzero(binned_count)
-            if occupied.size == 0:
-                continue
-            top = int(occupied[-1])               # highest occupied bin for this channel
-            n_top = int(binned_count[top])        # pixels sitting exactly there
-            frac = n_top / binned_count.sum()     # fraction of this channel's pixels
-            print(f"\t\t{name}: top value {top}, {n_top} px there ({frac*100:.4f}% of channel)")
-            saturation_points.append((top, n_top, frac))
-        # the singular saturation point is the max of the top values across all channels
-        saturation_point = max([sp[0] for sp in saturation_points])
-        print(f"\t\tOverall saturation point: {saturation_point}")
+        # # for each color channel, find the highest bin with non-zero count in the top some% of the intensities
+        # # then find the max of those values to find the saturation point for the plot
+        # saturation_points = []
+        # for binned_count, name in zip(bins_by_color, color_names):
+        #     occupied = np.flatnonzero(binned_count)
+        #     if occupied.size == 0:
+        #         continue
+        #     top = int(occupied[-1])               # highest occupied bin for this channel
+        #     n_top = int(binned_count[top])        # pixels sitting exactly there
+        #     frac = n_top / binned_count.sum()     # fraction of this channel's pixels
+        #     print(f"\t\t{name}: top value {top}, {n_top} px there ({frac*100:.4f}% of channel)")
+        #     saturation_points.append((top, n_top, frac))
+        # # the singular saturation point is the max of the top values across all channels
+        # saturation_point = max([sp[0] for sp in saturation_points])
+        # print(f"\t\tOverall saturation point: {saturation_point}")
 
         fig_top, ax_top = plt.subplots(figsize=(10, 6))
         ax_top.set_xlabel('Intensity')
@@ -243,8 +257,10 @@ def histogram(img_path, output, question=None, SHOW=False):
         if SAVE_PLOTS:
             title=f'{question+'_' if question else ''}top_{int(some*100)}_percent_histogram_of_{os.path.splitext(file_name)[0]}'
             fig_top.savefig(f"{output}{title}.png")
+        if SHOW:
+            plt.close(fig)
 
-    return saturation_point
+    # return saturation_point
 
 
 def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=False):
@@ -289,6 +305,8 @@ def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=Fa
         title=f'{img_name}_zoomed_to_{SQ_SIZE}px_square'
         # TODO how to handle which hw directory to automatically put output in?
         fig.savefig(f"output/hw1/07_zoomed/{CAMERAS.get(camera)}/{title}.png")
+    if SHOW:
+        plt.close(fig)
 
 def _open_image(path):
     '''
@@ -391,6 +409,8 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
             # TODO update HW1 code and output file structure to use more generic version above
             path = f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png"
         fig.savefig(path)
+    if SHOW:
+        plt.close(fig)
 
 
 def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, per_view, shape, camera=None, SHOW=True):
@@ -427,6 +447,8 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
     if SAVE_PLOTS:
         title=f'Residuals'
         fig.savefig(f"output/hw1/{CAMERAS.get(camera)}_{title}.png")
+    if SHOW:
+        plt.close(fig)
 
 
 def edge_deviation(pts, pattern=PATTERN_SIZE, side='first_col'):
@@ -509,6 +531,8 @@ def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=Tr
         plt.show()
     if SAVE_PLOTS:
         fig.savefig(f"output/hw2/03_{camera}_{title}.png")
+    if SHOW:
+        plt.close(fig)
 
     # Problem 3
     problem_num = "03"
@@ -638,3 +662,5 @@ def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
     if SAVE_PLOTS:
         title_alt = f"{image_0_name}+{image_1_name}"
         fig.savefig(f"output/hw1/06_RAW_vs_Processed/{title if title else title_alt}.png")
+    if SHOW:
+        plt.close(fig)

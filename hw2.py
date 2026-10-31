@@ -125,6 +125,8 @@ if __name__ == "__main__":
         if SHOW:
             plt.show()
         fig.savefig(f"{output}/09_generated_slanted_edge.png")
+        if SHOW:
+            plt.close(fig)
 
 
         # Problem 10
@@ -155,6 +157,8 @@ if __name__ == "__main__":
         if SHOW:
             plt.show()
         fig.savefig(f"{output}/10_ESF_LSF_MTF.png")
+        if SHOW:
+            plt.close(fig)
 
         # Problem 11
         problem_num = "11"
@@ -199,6 +203,8 @@ if __name__ == "__main__":
         if SHOW:
             plt.show()
         fig.savefig(f"{output}/14_green_plane.png")
+        if SHOW:
+            plt.close(fig)
 
 
     # Problem 15
@@ -227,6 +233,8 @@ if __name__ == "__main__":
                 if SHOW:
                     plt.show()
                 fig.savefig(f"{output}/15_central_square_edge_of_{basename}.png")
+                if SHOW:
+                    plt.close(fig)
             freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(central_square, real_data=True)
             mtf50_in_pixels = mtf.mtf50(freq, mtf_curve) # this is already in cycles per green-plane pixel
             # print the mtf50 in um and cycles per green-plane pixel
@@ -265,6 +273,8 @@ if __name__ == "__main__":
             if SHOW:
                 plt.show()
             fig.savefig(f"{output}/15_ESF_LSF_MTF_{basename}.png")
+            if SHOW:
+                plt.close(fig)
     # Make an overlay plot of all the mtf_curves
     cmap = plt.get_cmap("tab20")
     colors = cmap.colors
@@ -292,6 +302,8 @@ if __name__ == "__main__":
     if SHOW:
         plt.show()
     fig.savefig(f"{output}/15_MTF_Overlay.png")
+    if SHOW:
+        plt.close(fig)
 
     print(f"\nMean MTF50: {np.mean(mtf50_values_um):.4f} cycles per um or {np.mean(mtf50_values_px):.4f} cycles per green-plane pixel")
     print(f"Standard deviation: {np.std(mtf50_values_um, ddof=1):.4f} cycles per um or {np.std(mtf50_values_px, ddof=1):.4f} cycles per green-plane pixel")
