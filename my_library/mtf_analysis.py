@@ -31,8 +31,10 @@ print("not on sensor size, not on pixel count.")
 
 
 def get_pixel_mtf(nu):
-    '''A square pixel integrates over its area, so its MTF is |sinc(nu * pitch)|.'''
-    #TODO I think this should account for if we are doing green-plane vs full sensor...
+    '''A square pixel integrates over its area, so its MTF is |sinc(nu * pitch)|.
+    Pixel aperature will always be based on the full pixel pitch since it has to do with the physical
+    sensor.
+    '''
     return np.abs(np.sinc(np.asarray(nu) * PITCH_UM))     # np.sinc is sin(pi x)/(pi x)
 
 
@@ -187,11 +189,12 @@ def main(output=None):
         fig.savefig(f"{output}/07_mtf_cascade.png", dpi=150)
 
     at = lambda curve: np.interp(NYQUIST, nu, curve)
-    print(f"Remaining contrast at green-plane Nyquist ({NYQUIST * 1000:.0f} cycles/mm):")
+    system_contrast_at_green_nyquist = at(system_mtf)
+    print(f"Remaining contrast at green-plane Nyquist ({NYQUIST * 1000:.2f} cycles/mm):")
     # print(f"  diffraction alone  {np.interp(NYQUIST, nu, diffraction_mtf(nu)):.3f}")
     print(f"  ideal lens         {at(lens_mtf):.3f}")
     print(f"  pixel aperture     {at(pixel_mtf):.3f}")
     # print(f"  hand shake         {at(shake):.3f}")
-    print(f"  SYSTEM             {at(system_mtf):.3f}   <- the product of the two above curves")
+    print(f"  SYSTEM             {system_contrast_at_green_nyquist:.3f}   <- the product of the two above curves")
 
-    return system_mtf, mtf50_freq / 1000 # return everything in cycles per um
+    return nu, system_mtf, mtf50_freq / 1000, system_contrast_at_green_nyquist
