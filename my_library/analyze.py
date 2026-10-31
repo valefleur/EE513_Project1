@@ -201,9 +201,9 @@ def board_object_points():
     return objp
 
 def _list_raw_files(path_to_raws):
-    raw_files = sorted(os.fspath(i) for i in Path(path_to_raws).iterdir() if _is_raw(i))
-    print(f"There are {len(raw_files)} RAW files.")
-    return raw_files
+    raw_file_paths = sorted(os.fspath(i) for i in Path(path_to_raws).iterdir() if _is_raw(i))
+    print(f"There are {len(raw_file_paths)} RAW files.")
+    return raw_file_paths
 
 
 def contact_sheet(image_paths, camera=None, output=None, question=None, labels=None, SHOW=False):
@@ -218,6 +218,7 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
         img, name = _open_image(i)
         small_img = cv.cvtColor(cv.resize(img, (WIDTH, HEIGHT)), cv.COLOR_BGR2RGB)
         thumbs.append(small_img)
+        del img
 
     # if less than 20 images, use 4 columns
     # If there are more than 20 images, use 5 columns
@@ -243,6 +244,10 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
             f.set_title(label, fontsize=8)
     for f in range(len(thumbs), qty_rows*qty_cols):
         axes[f].axis('off')
+
+    # close the opened images to free memory
+    for img in thumbs:
+        del img
 
     # reduce the whitespace between the subplots
     plt.subplots_adjust(wspace=0.1, hspace=0.1)

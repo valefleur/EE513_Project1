@@ -12,7 +12,9 @@ def green_plane_from_raw(raw, which_grn=0):
     pattern = np.asarray(raw.raw_pattern)
     greens = [(r, c) for r in range(2) for c in range(2) if desc[pattern[r, c]] == "G"]
     r, c = greens[which_grn]
+    # print(f'Extracting green plane from raw Bayer mosaic: {desc[pattern[r, c]]} at row {r}, col {c}')
     black = float(raw.black_level_per_channel[pattern[r, c]])
+    # print(f"Black level for this channel: {black}")
     plane = raw.raw_image_visible[r::2, c::2].astype(float)
     return np.clip((plane - black) / (raw.white_level - black), 0, 1)
 

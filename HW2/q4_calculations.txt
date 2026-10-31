@@ -22,6 +22,6 @@ Then obtain it a second way, by a route that does not use your calibration at al
 	pixel pitch = 12.270 mm / 5040 px =  2.434 um/px
 
 RMS = np.sqrt((2.363**2 + 2.434**2)/ 2) = np.sqrt(11.508 / 2) = np.sqrt(5.754) = 2.40
-	This feels like a lot given the smaller value is less than the root mean square error...
+	(2.434 − 2.363) / 2.40 * 100 = 2.96%
 
 Everything in Part 2 rests on this number, and the second route is the only warning you will get that the first one is wrong.
