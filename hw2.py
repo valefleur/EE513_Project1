@@ -19,7 +19,7 @@ if __name__ == "__main__":
     SHOW = True
 
     camera_path = 'images/iPhone16/'
-    calib_path = 'all_calib_images/'
+    calib_path = 'not_lightroom/all_calib_images/'
     lightroom = 'Lightroom/'
 
     slanted_path = f'{camera_path}{lightroom}hw2_slanted/'
@@ -37,17 +37,27 @@ if __name__ == "__main__":
     # straight_lines_img = f'{calib_imgs_path}A56046EA-FEEA-4284-A51A-2DAF03198E01.DNG'
     # straight_lines_img = f'{calib_imgs_path}3D244010-6AE0-40AD-8050-317C858BC691.DNG'
 
-
-    # K, distortion, corners = analyze.calibrate_camera(calib_imgs_path, oneoff=straight_lines_img, camera=cam)
-
-    # original, undistorted = analyze.undistort(straight_lines_img, K, distortion, corners, cam)
     sigma = 1.0
     gen_mtf_curve = None
+
+
+    if not SPEED_UP:
+        # Problem 1
+        problem_num = "01"
+        print(f"\n**** Problem {problem_num} ****")
+        K, distortion, corners = analyze.calibrate_camera(calib_imgs_path, oneoff=straight_lines_img, camera=cam)
+
+
+        # Problem 2
+        problem_num = "02"
+        print(f"\n**** Problem {problem_num} ****")
+        original, undistorted, original_points, undistorted_points = analyze.undistort(straight_lines_img, K, distortion, corners, cam)
+
 
     # Problem 7
     problem_num = "07"
     print(f"\n**** Problem {problem_num} ****")
-    system_mtf_in_um, predicted_mtf50_in_um = mtf.main(output)
+    nu_um, system_mtf_in_um, predicted_mtf50_in_um, system_contrast_at_green_nyquist = mtf.main(output)
 
     if not SPEED_UP:
         # Problem 8
@@ -199,6 +209,7 @@ if __name__ == "__main__":
     mtf50_values_um = []
     mtf50_values_px = []
     mtf_curves = []
+    contrasts_at_green_Nyquist = []
     for path in raw_slant_paths:
         with rawpy.imread(str(path)) as image:
             basename = os.path.basename(path).split('.')[0]
@@ -217,12 +228,14 @@ if __name__ == "__main__":
                     plt.show()
                 fig.savefig(f"{output}/15_central_square_edge_of_{basename}.png")
             freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(central_square, real_data=True)
-            mtf50_in_pixels = mtf.mtf50(freq, mtf_curve) # this si already in cycles per green-plane pixel
+            mtf50_in_pixels = mtf.mtf50(freq, mtf_curve) # this is already in cycles per green-plane pixel
             # print the mtf50 in um and cycles per green-plane pixel
             mtf50_in_um = mtf50_in_pixels / (2 * mtf.PITCH_UM) # divide by 2 because we are using the green-plane, and multiply by pixel pitch in um to get cycles per um
+            contrast = np.interp(0.5, freq, mtf_curve)
             mtf50_values_um.append(mtf50_in_um)
             mtf50_values_px.append(mtf50_in_pixels)
             mtf_curves.append(mtf_curve)
+            contrasts_at_green_Nyquist.append(contrast)
             print(f"MTF50 for {basename}: {mtf50_in_um:.4f} cycles per um or {mtf50_in_pixels:.4f} cycles per green-plane pixel")
 
             # Plot the ESF, LSF, and MTF and save by the basename of the raw file
@@ -236,7 +249,7 @@ if __name__ == "__main__":
             axes[1].set_xlim(-8, 8); axes[1].set_title("Line spread function ($\\frac{\\mathrm{\\delta}\\text{ESF}}{\\mathrm{\\delta}}$)")
             axes[1].set_xlabel("distance from edge (px)")
             axes[2].plot(freq, mtf_curve, ':', lw=1, color="red", label=f"measured from {basename}")
-            if gen_mtf_curve:
+            if gen_mtf_curve is not None:
                 axes[2].plot(freq, gen_mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
             axes[2].plot(freq, mtf.get_analytic_mtf(freq, sigma=sigma), "--", lw=1.5,
                         color="orange", label="analytic")
@@ -258,12 +271,14 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(figsize=(6, 5))
     for i, mtf_curve in enumerate(mtf_curves):
         ax.plot(freq, mtf_curve[:len(freq)], lw=1.5, label=f"{os.path.basename(raw_slant_paths[i]).split('.')[0]}", color=colors[i])
-    if gen_mtf_curve:
+    if gen_mtf_curve is not None:
         ax.plot(freq, gen_mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
-    # plot the system_mtf from the analytical MTF of the system
-    # convert system_mtf from cycles per um to cycles per green-plane pixel by multiplying by 2 * mtf.PITCH_UM
-    system_mtf_in_px = system_mtf_in_um * (2 * mtf.PITCH_UM)
-    ax.plot(freq, system_mtf_in_px[:len(freq)], lw=2, color="black", label="system MTF from Problem 7")
+
+    green_pitch_um = 2 * mtf.PITCH_UM
+    nu_green_px = nu_um * green_pitch_um          # cycles/um -> cycles per green-plane pixel
+    # MTF values are dimensionless, so they stay unchanged. Resample onto the measured freq axis:
+    system_mtf_on_freq = np.interp(freq, nu_green_px, system_mtf_in_um)
+    ax.plot(freq, system_mtf_on_freq, lw=2, color="black", label="system MTF from Problem 7")
 
     # ax.plot(freq, mtf.get_analytic_mtf(freq, sigma=sigma), "--", lw=1.5,
     #                         color="orange", label="analytic")
@@ -280,3 +295,15 @@ if __name__ == "__main__":
 
     print(f"\nMean MTF50: {np.mean(mtf50_values_um):.4f} cycles per um or {np.mean(mtf50_values_px):.4f} cycles per green-plane pixel")
     print(f"Standard deviation: {np.std(mtf50_values_um, ddof=1):.4f} cycles per um or {np.std(mtf50_values_px, ddof=1):.4f} cycles per green-plane pixel")
+
+
+    # Problem 16
+    problem_num = "16"
+    print(f"\n**** Problem {problem_num} ****")
+    print(f"Remaining contrast of the edges in the captures at the green-plane Nyquist ({mtf.NYQUIST * 1000:.0f} cycles/mm):")
+    print(f"\tMean contrast: {np.mean(contrasts_at_green_Nyquist):.4f}")
+    print(f"\tStandard deviation: {np.std(contrasts_at_green_Nyquist, ddof=1):.4f}")
+
+    print(f"The predicted remaining contrast at the green-plane Nyquist from Problem 7 is: {system_contrast_at_green_nyquist:.4f}.")
+
+    print(f"The ratio of the measured mean contrast to the predicted contrast is: {np.mean(contrasts_at_green_Nyquist) / system_contrast_at_green_nyquist:.4f}.")

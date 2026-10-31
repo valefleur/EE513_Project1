@@ -353,13 +353,13 @@ def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=Tr
         # axes[0].scatter(x, y, s=12, c='red', edgecolors='white', linewidths=0.4)
         # axes[0].plot(pts_raw[:, 0], pts_raw[:, 1], '-', color='yellow') # for every row, plot column 0
         # axes[0].scatter(pts_raw[:, 0], pts_raw[:, 1], s=12, c='red', edgecolors='white', linewidths=0.4)
-        edge, (vx, vy, x0, y0), dev = edge_deviation(pts_raw)
+        edge, (vx, vy, x0, y0), raw_dev = edge_deviation(pts_raw)
         t = (edge - [x0, y0]) @ [vx, vy]                      # position of each point along the line
         p0 = np.array([x0, y0]) + t.min() * np.array([vx, vy])
         p1 = np.array([x0, y0]) + t.max() * np.array([vx, vy])
         axes[0].plot([p0[0], p1[0]], [p0[1], p1[1]], 'c-', lw=1.5)
         axes[0].scatter(edge[:, 0], edge[:, 1], s=40, facecolors='none', edgecolors='cyan')
-        axes[0].set_xlabel(f"Max deviation: {np.abs(dev).max():.2f} px\nRMS: {np.sqrt(np.mean(dev**2)):.2f} px")
+        axes[0].set_xlabel(f"Max deviation: {np.abs(raw_dev).max():.2f} px\nRMS: {np.sqrt(np.mean(raw_dev**2)):.2f} px")
 
     axes[1].imshow(undistorted)
     axes[1].set_title(f'The Undistorted View{' Full Frame' if DEBUG else ''}')
@@ -367,13 +367,13 @@ def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=Tr
     if pts_und.any():
         # axes[1].plot(pts_und[:, 0], pts_und[:, 1], '-', color='blue') # for every row, plot column 0
         # axes[1].scatter(pts_und[:, 0], pts_und[:, 1], s=12, c='purple', edgecolors='white', linewidths=0.4)
-        edge, (vx, vy, x0, y0), dev = edge_deviation(pts_und)
+        edge, (vx, vy, x0, y0), und_dev = edge_deviation(pts_und)
         t = (edge - [x0, y0]) @ [vx, vy]                      # position of each point along the line
         p0 = np.array([x0, y0]) + t.min() * np.array([vx, vy])
         p1 = np.array([x0, y0]) + t.max() * np.array([vx, vy])
         axes[1].plot([p0[0], p1[0]], [p0[1], p1[1]], 'c-', lw=1.5)
         axes[1].scatter(edge[:, 0], edge[:, 1], s=40, facecolors='none', edgecolors='cyan')
-        axes[1].set_xlabel(f"Max deviation: {np.abs(dev).max():.2f} px\nRMS: {np.sqrt(np.mean(dev**2)):.2f} px")
+        axes[1].set_xlabel(f"Max deviation: {np.abs(und_dev).max():.2f} px\nRMS: {np.sqrt(np.mean(und_dev**2)):.2f} px")
 
     plt.tight_layout()
     if SHOW:
@@ -381,7 +381,13 @@ def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=Tr
     if SAVE_PLOTS:
         fig.savefig(f"output/hw2/03_{camera}_{title}.png")
 
-    return rbg_img_to_undistort, undistorted
+    # Problem 3
+    problem_num = "03"
+    print(f"\n**** Problem {problem_num} ****")
+    print(f"Raw Deviation: Max: {np.abs(raw_dev).max():.2f} px, RMS: {np.sqrt(np.mean(raw_dev**2)):.2f} px")
+    print(f"Undistorted Deviation: Max: {np.abs(und_dev).max():.2f} px, RMS: {np.sqrt(np.mean(und_dev**2)):.2f} px")
+
+    return rbg_img_to_undistort, undistorted, pts_raw, pts_und
 
 
 def calibrate_camera(path_to_raws, camera=None, oneoff=None, SHOW=False):
