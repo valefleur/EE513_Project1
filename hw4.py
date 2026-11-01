@@ -1,6 +1,6 @@
 # hw4.py
 import os
-
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import rawpy
@@ -11,7 +11,11 @@ import my_library.analyze as analyze
 import my_library.image_metadata as img
 import my_library.photon_transfer_curve as ptc
 import my_library.linear_light as ll
+import my_library.generate as gen
 import my_library.latex_formatter as tex
+import my_library.shading as shading
+
+from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
 def plot_two_images(first, second, first_title, second_title, save_path, first_color=None, second_color=None, SHOW=False):
     fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
@@ -37,8 +41,7 @@ def plot_two_images(first, second, first_title, second_title, save_path, first_c
     if SHOW:
         plt.show()
     fig.savefig(save_path)
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
@@ -71,6 +74,18 @@ if __name__ == "__main__":
     output_path = 'output/hw4/'
 
     flats = {}
+
+    # Assert one camera type for all images in all color_sets
+    raws = []
+    for path in color_sets:
+        raws.extend(analyze._list_raw_files(path))
+    img.assert_one_camera(raws)
+
+    # Since all captures were from the same camera, we only benefit from looking at the Bayer mosaic once.
+    a_directory = Path(color_sets[0])
+    an_image_file = next((f for f in a_directory.iterdir() if f.is_file() and f.suffix.lower() in img.RAW_SUFFIXES), None)
+    print(f"Printing the Bayer mosaic for {an_image_file}...")
+    analyze.bayer_mosaic(an_image_file)
 
     for path_to_images, lighting in zip(color_sets, light_types.keys()):
         print(f"\n\n~*~*~*~*~*~*~*~  Now looking at images taken with {lighting} lighting. ~*~*~*~*~*~*~*~")
@@ -131,19 +146,19 @@ if __name__ == "__main__":
         your files actually saturate, and the fraction of each frame that reaches it.
         '''
         analyze.contact_sheet(raws, camera=cam, output=set_output_path, question=problem, labels=exposure_times)
-        analyze.bayer_mosaic(raws[first_img])
-        img.assert_one_camera(raws)
         # max_brightness_per_img = [] # TODO is max_brightness worth keeping?
+        VERBOSE = False
         for i in image_paths:
             # print the fraction of each frame at saturation
             clip_report = analyze.clip_report(i, sat=SATURATION)
             print(f"\nHistogram analysis for {os.path.basename(i)}:")
             print(f"\tPercentage of pixels at saturation:")
-            for k, v in clip_report.items():
-                if k != 'spike_ratio':
-                    print(f"\t\t{k}: {v*100:.3f}%")
+            if VERBOSE:
+                for k, v in clip_report.items():
+                    if k != 'spike_ratio':
+                        print(f"\t\t{k}: {v*100:.3f}%")
             print(f"\t\tSpike ratio: {clip_report['spike_ratio']:.3f}")
-            analyze.histogram(i, set_output_path, question=problem)
+            analyze.histogram(i, set_output_path, question=problem, VERBOSE=VERBOSE)
             # max_brightness_point = analyze.histogram(i, set_output_path, question=problem)
             # max_brightness_per_img.append(max_brightness_point)
 
@@ -188,6 +203,19 @@ if __name__ == "__main__":
         problem = "03"
         print(f"\n**** Problem {problem} ****")
         # Grab the image of the white sheet, which is the last one in the list of raws, and convert it to linear light
+        white_flat_rgb = ll.load_linear_quarter_rgb(raws[-1], saturation_dn=SATURATION)
+        map_of_white_flat = shading.shading_map_from_white(white_flat_rgb)
+        # plot a linearlized white flat image next to a normalized white flat image
+        plot_two_images(white_flat_rgb, map_of_white_flat, f'White flat in linear light from {img_df['file'][len(img_df)-1]}', f'Normalized white flat in linear light from {img_df['file'][len(img_df)-1]}', f"{set_output_path}{problem}_white_flat_normalized.png", first_color=None, second_color=None, SHOW=False)
+
+        analytic_lens_shading = shading.cos4_model(white_flat_rgb.shape[0], white_flat_rgb.shape[1], camera_spec=cam_spec, bin_factor=2)
+        # print(f"Analytic lens shading mean: {analytic_lens_shading.mean(axis=(0,1))}")
+
+        fraction = 0.10
+        print(f"Percentage of pixels per RGB channel with value >= 0.999, i.e. clipping: {(white_flat_rgb >= 0.999).mean(axis=(0,1))}")
+        print(f"The per RGB channel mean of the center {fraction*100:.0f}% of the shading map of the white flat: {shading.center_mean(map_of_white_flat, frac=fraction)}")
+
+        '''
         with rawpy.imread(str(raws[-1])) as raw:
             raw_img = raw.raw_image_visible
             black = img_df['black_levels'][len(img_df)-1][0]
@@ -206,15 +234,23 @@ if __name__ == "__main__":
             distance_squared = xv**2 + yv**2
 
             # Normalize the flat field to its own center and divide, treating each of the three channels separately rather than applying one gray correction.
-            white_flat_linear = white_flat_linear / white_flat_linear[center_y, center_x]
+            # white_flat_linear = white_flat_linear / white_flat_linear[center_y, center_x]
+            # white_flat_linear_normalized = ll.normalize_flat(white_flat_linear) # Error: Use the quarter-res RGB image so we get the three channels separately rather than applying one gray correction.
+            white_flat_rgb = ll.quarter_rgb(white_flat_linear, pattern=raw.raw_pattern, color_desc=raw.color_desc)
+            white_flat_linear_normalized = ll.normalize_flat(white_flat_rgb)
 
-            # Calculate cos(theta), but use geometry for easier computation
-            # cos(theta) = adjacent / hypotenuse = distance from center / distance from center to pixel
-            # cos(theta) = focal length / sqrt(focal_length^2 + distance_squared)
-            # That means cos^4(theta) = (focal_length^4) / (focal_length^2 + distance_squared)^2
-            # Come back to this: https://share.google/aimode/CM7eFPRMzH9Wm9pf1
+            # Plot white_flat_linear next to white_flat_linear_normalized
+            plot_two_images(white_flat_rgb, white_flat_linear_normalized, f'White flat in linear light from {img_df['file'][len(img_df)-1]}', f'Normalized white flat in linear light from {img_df['file'][len(img_df)-1]}', f"{set_output_path}{problem}_white_flat_normalized.png", first_color='gray', second_color='gray', SHOW=True)
 
-
+            # Get an analytical calculate cos(theta) as the distance from the center of the image
+            # to each pixel divided by the focal length in pixels, and raise it to the fourth
+            # power to get cos^4(theta) for each pixel.
+            # This is the the theoretical lens shading of the camera lens for comparison with the
+            # measured shading map from the white flat image.  A shading map will include real world
+            # effects such as shading from the lamps, improperly placed lens hoods, etc. that are
+            # not part of the theoretical lens shading.
+            analytic_lens_shading = gen.cos4_map(white_flat_rgb.shape[0], white_flat_rgb.shape[1], bin_factor=2)
+        '''
 
 
         # # Problem 3

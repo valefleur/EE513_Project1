@@ -1,4 +1,5 @@
 import numpy as np
+import cv2 as cv
 
 # Transfer functions from Prof. James McNames' psu_imaging.py (EE 513 Introduction to Image Processing).
 import psu_imaging as psu
@@ -17,7 +18,6 @@ def green_plane_from_raw(raw, which_grn=0):
     print(f"Black level for this channel: {black}")
     plane = raw.raw_image_visible[r::2, c::2].astype(float)
     return np.clip((plane - black) / (raw.white_level - black), 0, 1)
-
 
 
 def green_plane(path, which_grn=0):
@@ -116,4 +116,15 @@ def quarter_rgb(linear, pattern, color_desc):
             else: greens.append(plane)
     out[..., 1] = np.mean(greens, axis=0)
     return out
+
+
+def load_linear_quarter_rgb(path, saturation_dn):
+    """Raw file -> black-subtracted, saturation-normalized, quarter-res RGB. No interpolation."""
+    import rawpy
+    with rawpy.imread(str(path)) as raw:
+        blacks = set(raw.black_level_per_channel)
+        assert len(blacks) == 1, f"per-channel black levels differ: {blacks}"
+        lin = raw_to_linear_light(raw.raw_image_visible, blacks.pop(), saturation_dn)
+        return quarter_rgb(lin, raw.raw_pattern, raw.color_desc)
+
 

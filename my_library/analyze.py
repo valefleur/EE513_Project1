@@ -7,6 +7,7 @@ import pillow_heif
 import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 from pathlib import Path
 
 try:
@@ -46,7 +47,7 @@ def bayer_mosaic(path_to_raw):
         - white_level.
     '''
     assert os.path.isfile(path_to_raw), "ERROR: Path to RAW image required."
-    image = rawpy.imread(path_to_raw)
+    image = rawpy.imread(str(path_to_raw))
     print(f"\traw_type: {image.raw_type}")
     print(f"\traw_image_visible:\n\t\tshape: {image.raw_image_visible.shape}\n\t\tdtype: {image.raw_image_visible.dtype}")
     print(f"\traw_pattern:\n{image.raw_pattern}")
@@ -139,16 +140,17 @@ def clip_report(path, sat=4095):
     return dict(frame=hit.mean(), spike_ratio=spike, **per)
 
 
-def histogram(img_path, output, question=None, SHOW=False):
+def histogram(img_path, output, question=None, SHOW=False, VERBOSE=False):
     ### Numpy approach; could also use OpenCV
     file_name = os.path.basename(img_path)
-    print(f"\tHistogram analysis for {file_name}.")
+    # print(f"\tHistogram analysis for {file_name}.")
     # Unpack image data from metadata
     with rawpy.imread(str(img_path)) as raw:
         # Slice out pixels by color using the Bayer mosaic pattern
         pattern = raw.raw_pattern
         color_desc = raw.color_desc
-        print(f"\t\tDescriptor: {color_desc}\nPattern:\n{pattern}")
+        if VERBOSE:
+            print(f"\t\tDescriptor: {color_desc}\nPattern:\n{pattern}")
         '''
         TODO automatically use the pattern and color_desc to decide which
         color is which array.  Since I am categorizing a single camera
@@ -179,8 +181,9 @@ def histogram(img_path, output, question=None, SHOW=False):
             color_saturations.append(brightest)
             if max_intensity < brightest:
                 max_intensity = brightest
-            # print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
-            print(f"\t\tWhite level[{exif_white_level}] is {'>=' if exif_white_level >= brightest else '<'} {name} channel max: {brightest}.")
+            if VERBOSE:
+                # print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
+                print(f"\t\tWhite level[{exif_white_level}] is {'>=' if exif_white_level >= brightest else '<'} {name} channel max: {brightest}.")
 
         # per channel, flatten the array and call np.bincount (if int values)
         color_means = []
@@ -191,12 +194,14 @@ def histogram(img_path, output, question=None, SHOW=False):
             color_means.append(avg)
             binned_count = np.bincount(color.flatten(), minlength=raw.white_level+1)
             bins_by_color.append(binned_count)
-            print(f"\t\t{str(name).upper()}")
-            print(f"\t\t\tMean Intensity: {avg}")
-            # np.argmax to find the tallest spike
-            print(f"\t\t\tHighest occupied value: {np.max(np.nonzero(binned_count))}")
-            # np.nonzero to find the highest bin with non-zero count
-            print(f"\t\t\tMost common intensity: {np.max(np.argmax(binned_count))}")
+            if VERBOSE:
+                print(f"\t\t{str(name).upper()}")
+                print(f"\t\t\tMean Intensity: {avg}")
+                # np.argmax to find the tallest spike
+                print(f"\t\t\tHighest occupied value: {np.max(np.nonzero(binned_count))}")
+                # np.nonzero to find the highest bin with non-zero count
+                print(f"\t\t\tHighest bin with non-zero count: {np.max(np.nonzero(binned_count))}")
+                print(f"\t\t\tMost common intensity: {np.max(np.argmax(binned_count))}")
 
         # plot one histogram with all colors together
         # create one plot with one histogram for each bins_by_color
@@ -214,8 +219,7 @@ def histogram(img_path, output, question=None, SHOW=False):
         if SAVE_PLOTS:
             title=f'{question+'_' if question else ''}full_histogram_of_{os.path.splitext(file_name)[0]}'
             fig.savefig(f"{output}{title}.png")
-        if SHOW:
-            plt.close(fig)
+        plt.close(fig)
 
         # do another plot of the upper 1-5% of the intensities
         some = 0.05
@@ -243,9 +247,9 @@ def histogram(img_path, output, question=None, SHOW=False):
         ax_top.set_title(f'Top {some*100}% Histogram of RAW Image Intensities for {os.path.splitext(file_name)[0]}')
         # set x-axis to show only top some% of the intensities
         top_some_percent = max_intensity - int(max_intensity * some)
-        ax_top.set_xlim([top_some_percent, int(max_intensity * 1.01)])
+        ax_top.set_xlim((top_some_percent, int(max_intensity * 1.01)))
         # set y-axis upper limit to the max of what is in the upper some% of the intensities
-        ax_top.set_ylim([0, max([np.max(binned_count[top_some_percent:]) for binned_count in bins_by_color]) * 1.1])
+        ax_top.set_ylim((0, max([np.max(binned_count[top_some_percent:]) for binned_count in bins_by_color]) * 1.1))
 
         for binned_count, name in zip(bins_by_color, color_names):
             ax_top.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
@@ -257,8 +261,7 @@ def histogram(img_path, output, question=None, SHOW=False):
         if SAVE_PLOTS:
             title=f'{question+'_' if question else ''}top_{int(some*100)}_percent_histogram_of_{os.path.splitext(file_name)[0]}'
             fig_top.savefig(f"{output}{title}.png")
-        if SHOW:
-            plt.close(fig)
+        plt.close(fig_top)
 
     # return saturation_point
 
@@ -305,8 +308,7 @@ def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=Fa
         title=f'{img_name}_zoomed_to_{SQ_SIZE}px_square'
         # TODO how to handle which hw directory to automatically put output in?
         fig.savefig(f"output/hw1/07_zoomed/{CAMERAS.get(camera)}/{title}.png")
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)
 
 def _open_image(path):
     '''
@@ -409,8 +411,7 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
             # TODO update HW1 code and output file structure to use more generic version above
             path = f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png"
         fig.savefig(path)
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)
 
 
 def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, per_view, shape, camera=None, SHOW=True):
@@ -428,7 +429,7 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
     a1.quiver(pos[:, 0], pos[:, 1], res[:, 0], res[:, 1],
             np.linalg.norm(res, axis=1), cmap="viridis",
             angles="xy", scale_units="xy", scale=0.002, width=0.003)
-    a1.add_patch(plt.Rectangle((0, 0), *shape, fill=False, ec="#213921", lw=1.2))
+    a1.add_patch(Rectangle((0, 0), *shape, fill=False, ec="#213921", lw=1.2))
     a1.set_xlim(-200, shape[0] + 200); a1.set_ylim(shape[1] + 200, -200)
     a1.set_aspect("equal"); a1.grid(alpha=0)
     a1.set_title("residuals by position, drawn 500x", fontsize=11)
@@ -447,8 +448,8 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
     if SAVE_PLOTS:
         title=f'Residuals'
         fig.savefig(f"output/hw1/{CAMERAS.get(camera)}_{title}.png")
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)
+
 
 
 def edge_deviation(pts, pattern=PATTERN_SIZE, side='first_col'):
@@ -531,8 +532,7 @@ def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=Tr
         plt.show()
     if SAVE_PLOTS:
         fig.savefig(f"output/hw2/03_{camera}_{title}.png")
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)
 
     # Problem 3
     problem_num = "03"
@@ -662,5 +662,4 @@ def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
     if SAVE_PLOTS:
         title_alt = f"{image_0_name}+{image_1_name}"
         fig.savefig(f"output/hw1/06_RAW_vs_Processed/{title if title else title_alt}.png")
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)

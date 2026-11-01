@@ -115,7 +115,7 @@ def lens_id(path):
     """The fingerprint of the camera that made this raw file.
     Originally written by Prof. James McNames.
     """
-    print(f"path: {path}")
+    # print(f"path: {path}")
     with tifffile.TiffFile(path) as t:
         p = t.pages[0]
         exif = p.tags["ExifTag"].value
