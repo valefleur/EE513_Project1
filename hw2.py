@@ -9,6 +9,7 @@ import my_library.mtf_analysis as mtf
 import my_library.image_metadata as img
 import my_library.generate as gen
 import my_library.linear_light as ll
+from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
 if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
@@ -63,7 +64,7 @@ if __name__ == "__main__":
         # Problem 8
         problem_num = "08"
         print(f"\n**** Problem {problem_num} ****")
-        predicted_mtf50_in_pixels = predicted_mtf50_in_um * mtf.PITCH_UM * 2 # multiply by 2 since we are using the green-plane
+        predicted_mtf50_in_pixels = predicted_mtf50_in_um * cam_spec.pitch_um * 2 # multiply by 2 since we are using the green-plane
         print(f"Predicted system MTF50 is:\n\t{predicted_mtf50_in_um:.4f} cycles/um\n\t{predicted_mtf50_in_um * 1000:.1f}  cycles/mm\n\t{predicted_mtf50_in_pixels:.4f} cycles per green pixel")
 
 
@@ -125,8 +126,7 @@ if __name__ == "__main__":
         if SHOW:
             plt.show()
         fig.savefig(f"{output}/09_generated_slanted_edge.png")
-        if SHOW:
-            plt.close(fig)
+        plt.close(fig)
 
 
         # Problem 10
@@ -157,8 +157,7 @@ if __name__ == "__main__":
         if SHOW:
             plt.show()
         fig.savefig(f"{output}/10_ESF_LSF_MTF.png")
-        if SHOW:
-            plt.close(fig)
+        plt.close(fig)
 
         # Problem 11
         problem_num = "11"
@@ -203,8 +202,7 @@ if __name__ == "__main__":
         if SHOW:
             plt.show()
         fig.savefig(f"{output}/14_green_plane.png")
-        if SHOW:
-            plt.close(fig)
+        plt.close(fig)
 
 
     # Problem 15
@@ -233,12 +231,11 @@ if __name__ == "__main__":
                 if SHOW:
                     plt.show()
                 fig.savefig(f"{output}/15_central_square_edge_of_{basename}.png")
-                if SHOW:
-                    plt.close(fig)
+                plt.close(fig)
             freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(central_square, real_data=True)
             mtf50_in_pixels = mtf.mtf50(freq, mtf_curve) # this is already in cycles per green-plane pixel
             # print the mtf50 in um and cycles per green-plane pixel
-            mtf50_in_um = mtf50_in_pixels / (2 * mtf.PITCH_UM) # divide by 2 because we are using the green-plane, and multiply by pixel pitch in um to get cycles per um
+            mtf50_in_um = mtf50_in_pixels / (2 * cam_spec.pitch_um) # divide by 2 because we are using the green-plane, and multiply by pixel pitch in um to get cycles per um
             contrast = np.interp(0.5, freq, mtf_curve)
             mtf50_values_um.append(mtf50_in_um)
             mtf50_values_px.append(mtf50_in_pixels)
@@ -273,8 +270,7 @@ if __name__ == "__main__":
             if SHOW:
                 plt.show()
             fig.savefig(f"{output}/15_ESF_LSF_MTF_{basename}.png")
-            if SHOW:
-                plt.close(fig)
+            plt.close(fig)
     # Make an overlay plot of all the mtf_curves
     cmap = plt.get_cmap("tab20")
     colors = cmap.colors
@@ -284,7 +280,7 @@ if __name__ == "__main__":
     if gen_mtf_curve is not None:
         ax.plot(freq, gen_mtf_curve, lw=2, color="forestgreen", label="measured from generated slanted edge")
 
-    green_pitch_um = 2 * mtf.PITCH_UM
+    green_pitch_um = 2 * cam_spec.pitch_um
     nu_green_px = nu_um * green_pitch_um          # cycles/um -> cycles per green-plane pixel
     # MTF values are dimensionless, so they stay unchanged. Resample onto the measured freq axis:
     system_mtf_on_freq = np.interp(freq, nu_green_px, system_mtf_in_um)
@@ -302,8 +298,7 @@ if __name__ == "__main__":
     if SHOW:
         plt.show()
     fig.savefig(f"{output}/15_MTF_Overlay.png")
-    if SHOW:
-        plt.close(fig)
+    plt.close(fig)
 
     print(f"\nMean MTF50: {np.mean(mtf50_values_um):.4f} cycles per um or {np.mean(mtf50_values_px):.4f} cycles per green-plane pixel")
     print(f"Standard deviation: {np.std(mtf50_values_um, ddof=1):.4f} cycles per um or {np.std(mtf50_values_px, ddof=1):.4f} cycles per green-plane pixel")

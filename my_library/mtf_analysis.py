@@ -2,23 +2,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import special
 import cv2 as cv
-from iphone_specs import F_MM, N, LAMBDA_UM, PITCH_UM
+from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
-# Note: All code in this file borrowed from Prof. James McNames' 03_mtf_cascade.ipynb and 04_measure_your_camera.ipynb and modified as needed for homework 2.
+# Note: All code in this file borrowed from Prof. James McNames' 03_mtf_cascade.ipynb and 04_measure_your_camera.ipynb and modified as needed for homeworks and Project 1.
 
 plt.rcParams.update({"figure.dpi": 110, "font.size": 10,
                      "axes.grid": True, "grid.alpha": 0.3})
 
-D_MM = F_MM / N                       # aperture diameter
-CUTOFF = 1.0 / (LAMBDA_UM * N)        # incoherent diffraction cutoff, cycles/um
-NYQUIST = 1.0 / (2 * 2 * PITCH_UM)    # green-plane sensor Nyquist, cycles/um
-AIRY_UM = 1.22 * LAMBDA_UM * N        # radius of the first dark ring
+LAMBDA_UM = 0.550   # green light, micrometres
+D_MM = cam_spec.focal_mm / cam_spec.f_number                       # aperture diameter
+CUTOFF = 1.0 / (LAMBDA_UM * cam_spec.f_number)        # incoherent diffraction cutoff, cycles/um
+NYQUIST = 1.0 / (2 * 2 * cam_spec.pitch_um)    # green-plane sensor Nyquist, cycles/um
+AIRY_UM = 1.22 * LAMBDA_UM * cam_spec.f_number        # radius of the first dark ring
 
 print(f"aperture diameter D     {D_MM:8.2f} mm")
 print(f"diffraction cutoff      {CUTOFF * 1000:8.0f} cycles/mm")
 print(f"sensor Nyquist          {NYQUIST * 1000:8.0f} cycles/mm")
 print(f"cutoff / Nyquist        {CUTOFF / NYQUIST:8.2f}")
-print(f"Airy radius             {AIRY_UM:8.2f} um  ({AIRY_UM / PITCH_UM:.2f} pixels)")
+print(f"Airy radius             {AIRY_UM:8.2f} um  ({AIRY_UM / cam_spec.pitch_um:.2f} pixels)")
 print()
 print("The cutoff depends on wavelength and f-number ALONE. Not on focal length,")
 print("not on sensor size, not on pixel count.")
@@ -29,7 +30,7 @@ def get_pixel_mtf(nu):
     Pixel aperature will always be based on the full pixel pitch since it has to do with the physical
     sensor.
     '''
-    return np.abs(np.sinc(np.asarray(nu) * PITCH_UM))     # np.sinc is sin(pi x)/(pi x)
+    return np.abs(np.sinc(np.asarray(nu) * cam_spec.pitch_um))     # np.sinc is sin(pi x)/(pi x)
 
 
 def get_diffraction_mtf(nu):
@@ -170,7 +171,7 @@ def main(output=None):
 
     ax.set_xlabel("spatial frequency (cycles/mm)"); ax.set_ylabel("contrast")
     margin = 1.02 # visual margin for the axes limits
-    spatial_cutoff_freq = 1 / (LAMBDA_UM * N) * 1000 # because our frequency scale is in mm not um
+    spatial_cutoff_freq = 1 / (LAMBDA_UM * cam_spec.f_number) * 1000 # because our frequency scale is in mm not um
     # ax.set_xlim(0, spatial_cutoff_freq * margin)
     ax.set_ylim(0, 1 * margin)
     ax.legend(fontsize=9, frameon=False)
