@@ -128,16 +128,19 @@ def metadata(path_to_image, extras=False):
 
 
 def clip_report(path, sat=4095):
-    """Fraction of pixels at the ceiling (whole frame and per channel), plus a spike ratio."""
+    """Fraction of pixels at the ceiling (whole frame and per channel), plus a spike ratio and more."""
     with rawpy.imread(str(path)) as raw:
-        img = raw.raw_image_visible
-        colors = raw.raw_colors_visible
+        img, colors = raw.raw_image_visible, raw.raw_colors_visible
         desc = raw.color_desc.decode()
     hit = img >= sat
     counts = np.bincount(img.ravel(), minlength=sat + 1)
-    spike = counts[sat] / max(counts[sat - 20:sat].mean(), 1)   # ~0 if nothing clips
-    per = {f"{desc[c]}{c}": hit[colors == c].mean() for c in range(4)}
-    return dict(frame=hit.mean(), spike_ratio=spike, **per)
+    mx = int(img.max())
+    return dict(
+        frame=float(hit.mean()),
+        spike_ratio=float(counts[sat] / max(counts[sat - 20:sat].mean(), 1)),   # ~0 if nothing clips
+        max_dn=mx,
+        n_at_max=int((img == mx).sum()),
+        channels={f"{desc[c]}{c}": float(hit[colors == c].mean()) for c in range(4)})
 
 
 def histogram(img_path, output, question=None, SHOW=False, VERBOSE=False):
