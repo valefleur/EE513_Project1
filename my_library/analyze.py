@@ -143,6 +143,53 @@ def clip_report(path, sat=4095):
         channels={f"{desc[c]}{c}": float(hit[colors == c].mean()) for c in range(4)})
 
 
+def channel_histograms(path):
+    """Raw-value histogram of each CFA site, keyed like clip_report ("R0", "G1", "B2", "G3").
+
+    Returns (histograms, white_level). Each histogram has white_level + 1 bins
+    (index = raw DN). Small to keep: about 4 x 4096 integers per file.
+    """
+    with rawpy.imread(str(path)) as raw:
+        img, colors = raw.raw_image_visible, raw.raw_colors_visible
+        desc = raw.color_desc.decode()
+        white = int(raw.white_level)
+        hists = {f"{desc[c]}{c}": np.bincount(img[colors == c].ravel(), minlength=white + 1)
+                 for c in range(4)}
+    return hists, white
+
+
+def top_spike(counts, white_level, window_frac=0.02, n_compare=8):
+    """Look for a saturation spike at the very top of one channel's histogram.
+
+    Problem 1 (HW4): a file can saturate below its declared white level, and raw files
+    are often coarsely quantized at high signal, which leaves many empty values and
+    scatters small spikes through the upper half. So:
+      - search only the top `window_frac` of the declared range;
+      - the candidate is the most populated raw value in that window;
+      - its count is compared with the median count of the `n_compare` nearest
+        OCCUPIED values below it. Comparing with occupied values only means the empty
+        codes of a coarsely quantized file do not make an ordinary bin look like a spike.
+    A ratio near 1 means no pile-up (nothing saturated); a large ratio means pixels
+    are stacking up at a ceiling. Also reports the fraction of the channel in the
+    window, because a soft ceiling spreads its pile-up over several values.
+    """
+    counts = np.asarray(counts)
+    lo = int(white_level * (1 - window_frac))
+    window = counts[lo:white_level + 1]
+    occupied = np.flatnonzero(counts)
+    result = dict(top_dn=int(occupied[-1]) if occupied.size else None,
+                  peak_dn=None, n_peak=0, spike_ratio=0.0,
+                  window_frac=float(window.sum() / max(counts.sum(), 1)))
+    if window.sum() == 0:
+        return result                                   # nothing near the ceiling at all
+    peak = lo + int(np.argmax(window))
+    below = occupied[occupied < peak][-n_compare:]
+    ref = np.median(counts[below]) if below.size else 1.0
+    result.update(peak_dn=peak, n_peak=int(counts[peak]),
+                  spike_ratio=float(counts[peak] / max(ref, 1.0)))
+    return result
+
+
 def histogram(img_path, output, question=None, SHOW=False, VERBOSE=False):
     ### Numpy approach; could also use OpenCV
     file_name = os.path.basename(img_path)

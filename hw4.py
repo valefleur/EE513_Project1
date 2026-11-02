@@ -86,6 +86,48 @@ if __name__ == "__main__":
     datalog.print_inventory(catalog)
     datalog.check_constant_within(catalog, "round", ["iso", "exposure_s", "black_levels"])
     img.assert_one_camera(catalog["path"].tolist())        # the professor's function, his output
+
+    # Problem 1 deliverables that cover every round, so they are produced once here.
+    # (The per-round contact sheets and histograms are made inside the loop below.)
+    problem = "01"
+    print(f"\n**** Problem {problem}: saturation and inventory, all rounds ****")
+    catalog, measured_sat = datalog.add_saturation_stats(catalog)
+    found = [v for v in measured_sat.values() if v is not None]
+    declared = sorted(set(catalog["white_level_dn"]))
+    print(f"DELIVERABLE {problem}: raw value at which the files actually saturate, per CFA site "
+          f"(declared white level {declared}):")
+    for ch, v in measured_sat.items():
+        n_frames = int((catalog[f"spike_{ch}"] >= datalog.SPIKE_THRESHOLD).sum())
+        print(f"\t{ch}: {v if v is not None else 'not measurable (never clipped)'}"
+              f"{f' (spike in {n_frames} of {len(catalog)} frames)' if v is not None else ''}")
+    if found and min(found) != cam_spec.saturation_dn:
+        print(f"\tWARNING measured saturation {min(found)} differs from "
+              f"cam_spec.saturation_dn = {cam_spec.saturation_dn}. Update camera_specs.py, "
+              "because linear light and every clip mask downstream use that value.")
+    print(f"DELIVERABLE {problem}: fraction of each frame at or above saturation:")
+    print(catalog[["round", "kind", "chart", "file", "sat_frame_pct"] +
+                  [f"sat_{ch}_pct" for ch in measured_sat]].to_string(
+                      index=False, float_format="{:.3f}".format))
+    # TODO NOW: This should be a LaTeX table
+
+    chart_label = [str(c) if pd.notna(c) else "white" for c in catalog["chart"]]
+    tex.generate_table([catalog["round"].tolist(), chart_label, catalog["file"].tolist(),
+                        catalog["iso"].tolist(), catalog["exposure"].tolist(),
+                        [f"{v:.3f}" for v in catalog["sat_frame_pct"]]],
+                       labels=["Round", "Chart", "File", "ISO", "Exposure", "% at saturation"],
+                       caption=f"Captures from the {cam_spec.name}, all rounds",
+                       output_path=f"{output_path}{problem}_inventory.txt",
+                       escape=True, VERBOSE=False)
+    sites = list(measured_sat)
+    tex.generate_table([sites,
+                        [str(measured_sat[ch]) if measured_sat[ch] is not None else "not clipped"
+                         for ch in sites],
+                        [str(int((catalog[f"spike_{ch}"] >= datalog.SPIKE_THRESHOLD).sum()))
+                         for ch in sites]],
+                       labels=["CFA site", "Saturation (DN)", "Frames clipped"],
+                       caption=f"Measured saturation per CFA site (declared white level {declared})",
+                       output_path=f"{output_path}{problem}_saturation.txt",
+                       escape=True, VERBOSE=False)
     catalog.to_csv(f"{output_path}catalog.csv", index=False)
 
 
@@ -94,6 +136,13 @@ if __name__ == "__main__":
     an_image_file = next((f for f in a_directory.iterdir() if f.is_file() and f.suffix.lower() in img.RAW_SUFFIXES), None)
     print(f"Printing the Bayer mosaic for {an_image_file}...")
     analyze.bayer_mosaic(an_image_file)
+
+    # Problem 4 state. MANUAL_CLICKS: only for files the detector misses. Keys are file names,
+    # values are quarter-res (x, y) centers of patches 1, 6, 24, 19 (dark skin, bluish green,
+    # black, white), in that order.
+    MANUAL_CLICKS = {}
+    patch_tables = []
+    patch_means = {}
 
     for lighting_type, path_to_images in rounds.items():
         print(f"\n\n~*~*~*~*~*~*~*~*~  Now looking at images taken with {lighting_type} lighting. ~*~*~*~*~*~*~*~")
@@ -104,8 +153,7 @@ if __name__ == "__main__":
         exposure_times = round_df["exposure"].tolist()
         raws = [str(p) for p in image_paths]
 
-        labels = ["File Name", "Exposure Time", "ISO"]
-        tex.generate_table([round_df["file"].tolist(), exposure_times, round_df["iso"].tolist()], labels=labels, output_path=f"{output_path_for_lighting}01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
+        # One metadata table for all rounds is written before this loop (01_inventory.txt).
 
         # Problem 1
         problem = "01"
@@ -131,6 +179,9 @@ if __name__ == "__main__":
         for i in image_paths:
             # print(f"\nHistogram analysis for {os.path.basename(i)}:")
             analyze.histogram(i, output_path_for_lighting, question=problem, VERBOSE=VERBOSE)
+
+        # Saturation value and fraction of each frame at saturation: measured for all rounds
+        # before this loop (DELIVERABLE 01 printout, 01_saturation.txt, 01_inventory.txt).
 
 
         # Problem 2
@@ -164,7 +215,53 @@ if __name__ == "__main__":
             # my camera's CFA pattern comes out to BGGR, so the red site is at (1, 1), the green sites are at (0, 1) and (1, 0), and the blue site is at (0, 0)
             quarter = ll.quarter_rgb(linear, pattern=raw.raw_pattern, color_desc=raw.color_desc)
 
-            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {round_df.iloc[first_img]["file"]}', f'Quarter resolution linear light image from {round_df.iloc[first_img]["file"]}', f"{output_path_for_lighting}{problem}_linear_light.png", first_color='gray', second_color=None, SHOW=False)
+            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {round_df.iloc[first_img]["file"]}', f'Quarter resolution linear light image from {round_df.iloc[first_img]["file"]}', f"{output_path_for_lighting}{problem}_{lighting_type}_quarter_comparison.png", first_color='gray', second_color=None, SHOW=False)
+
+
+        # Problem 4
+        problem = "04"
+        print(f"\n**** Problem {problem} ****")
+        '''
+        Use OpenCV4 to locate the 24 patches of flat color in the quarter resolution image.  Sample
+        no more than the middle 50% of each patch to avoid the black borders and any other edge
+        effects. Measure the mean and standard deviation of each patch. The standard deviation is a
+        measure of how flat the patch is, and the mean is a measure of its color. The mean should
+        be reported in linear light, not sRGB. The standard deviation should be reported in 8-bit
+        levels and linear light.
+        '''
+        # Patch location and middle-half sampling: see my_library/color_chart.py for credits
+        # (sampling rule from Prof. James McNames, 07_build_an_isp.ipynb section 4).
+        charts_this_round = catalog[(catalog["round"] == lighting_type) & (catalog.kind == "chart")]
+        for _, row in charts_this_round.iterrows():
+            label = f"{lighting_type}_chart{row.chart}"
+            result = chart.measure_chart(row.path, cam_spec.saturation_dn, clicks=MANUAL_CLICKS.get(row.file))
+            if result is None:
+                print(f"{row.file}: detector found no chart. Add its four corner-patch centers "
+                      f"to MANUAL_CLICKS (see chart.homography_from_clicks) and rerun.")
+                continue
+            print(f"\n{label} ({row.file}), located with {result['how']}:")
+            for msg in result["checks"]:
+                print(f"\t{msg}")
+
+            print(f"DELIVERABLE {problem}a: Plot sampled patch regions...")
+            chart.plot_regions(result, f"{label}: {row.file}",
+                               save_path=f"{output_path_for_lighting}{problem}_{label}_regions.png")
+            chart.plot_edge_profile(result, save_path=f"{output_path_for_lighting}{problem}_{label}_edge_profile.png")
+            df = chart.patch_table(result, round=lighting_type, chart=row.chart, file=row.file)
+            patch_tables.append(df)
+            patch_means[(lighting_type, row.chart)] = result["means"]      # 24 x 3, for later problems
+
+            print(f"DELIVERABLE {problem}b: Generating LaTeX table of 24 by 3 patch means...")
+            tex.generate_table([df["patch"].tolist(), df["name"].tolist()] +
+                               [[f"{v:.4f}" for v in df[c]] for c in ("R", "G", "B")],
+                               labels=["Patch", "Name", "R", "G", "B"],
+                               caption=f"Mean linear camera RGB, {label}",
+                               output_path=f"{output_path_for_lighting}{problem}_{label}_patch_means.txt")
+
+    if patch_tables:
+        all_patches = pd.concat(patch_tables, ignore_index=True)
+        all_patches.to_csv(f"{output_path}04_patch_means.csv", index=False)
+        print(f"\nProblem 4: wrote {len(all_patches)} patch rows to {output_path}04_patch_means.csv")
 
 
     # Problem 3

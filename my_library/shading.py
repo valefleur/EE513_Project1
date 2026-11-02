@@ -107,14 +107,56 @@ def shading_ratios(round_name, white_rgb, shading_map, model, frac=0.10):
     row["cos4_model"] = corner_mean(model, frac) / center_mean(model, frac)   # 2D input -> scalar
     return row
 
-def plot_profiles(profiles: dict, model_profile=None, title="", save_path=None):
-    """profiles: {round: (w, 3) array}. Color = channel, linestyle = round."""
+# Okabe-Ito colorblind-safe palette (black left out; it is used for the model).
+# Rounds get these colors, so a round's color never looks like a channel's R, G or B.
+ROUND_COLORS = ("#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#0072B2", "#D55E00", "#F0E442")
+ROUND_STYLES = ("-", "--", "-.", ":")
+
+
+def plot_profiles(profiles: dict, model_profile=None, title="", save_path=None, layout="by_channel"):
+    """Central horizontal profiles of every round, normalized to center.
+
+    profiles: {round: (w, 3) array}.
+    layout="by_channel" (default): one panel per color channel, sharing the y axis.
+        Every round is drawn on the same axis within each panel, colored by round,
+        so rounds are compared directly instead of hunting through nine overlaid
+        lines. The cos^4 model is the same in every panel.
+    layout="single": the original single axis, color = channel, line style = round.
+    """
+    if layout == "single":
+        return _plot_profiles_single(profiles, model_profile, title, save_path)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), sharey=True)
+    for c, ax in enumerate(axes):
+        for i, (name, prof) in enumerate(profiles.items()):
+            x = np.arange(len(prof)) - (len(prof) - 1) / 2      # distance from center, px
+            ax.plot(x, prof[:, c], color=ROUND_COLORS[i % len(ROUND_COLORS)],
+                    ls=ROUND_STYLES[i % len(ROUND_STYLES)], lw=1.4, label=str(name))
+        if model_profile is not None:
+            xm = np.arange(len(model_profile)) - (len(model_profile) - 1) / 2
+            ax.plot(xm, model_profile, color="k", lw=2, alpha=0.6, label="cos⁴ model")
+        ax.axhline(1.0, color="gray", lw=0.6)
+        # Panel title in the channel's own color, so the channel is still obvious.
+        ax.set_title(f"{'RGB'[c]} channel", color=CHANNEL_COLORS[c], fontweight="bold")
+        ax.set_xlabel("distance from image center (quarter-res px)")
+        ax.grid(alpha=0.3)
+    axes[0].set_ylabel("relative to center")
+    axes[-1].legend(fontsize=8, loc="lower center")
+    fig.suptitle(title)
+    fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_profiles_single(profiles, model_profile=None, title="", save_path=None):
+    """Original layout: one axis, color = channel, line style = round."""
     styles = ["-", "--", ":", "-."]
     fig, ax = plt.subplots(figsize=(9, 4.5))
     for (name, prof), ls in zip(profiles.items(), styles * 2):
         x = np.arange(len(prof)) - (len(prof) - 1) / 2          # distance from center, px
+        # TODO over winter break: Wse a different plotting library that can do interactive legends (click to hide/show).
         for c in range(3):
-            ax.plot(x, prof[:, c], ls=ls, color=CHANNEL_COLORS[c], lw=1.3)
+            ax.plot(x, prof[:, c], ls=ls, color=CHANNEL_COLORS[c], lw=1.3, alpha=0.5)
     if model_profile is not None:
         ax.plot(x, model_profile, color="k", lw=2, alpha=0.6)
     ax.set_xlabel("distance from image center (quarter-res px)")
