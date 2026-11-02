@@ -3,6 +3,14 @@
 import warnings
 import numpy as np
 import cv2 as cv
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import pandas as pd
+import psu_imaging as psu
+
+# TODO have a "css"-like module for colors, line styles, etc. to keep them consistent across all plots
+# Or, a winter break project could be to replot everything in Seaborn... Been meaning to learn that.
+CHANNEL_COLORS = ("#D7263D", "#00A676", "#003B73")   # R, G, B (analyze.COLORS palette)
 
 def center_mean(img, frac=0.10):
     """Per-channel mean of a centered box covering `frac` of each dimension."""
@@ -23,8 +31,10 @@ def corner_mean(img, frac=0.10, all_corners=True):
 
 
 def shading_map_from_white(white_rgb, center_frac=0.10, smooth_sigma=0, max_center=0.98):
-    """White sheet / its own per-channel center. 1.0 at center, <1 toward the corners.
-    Measures lens AND lamp falloff together; don't assume which until profiles are compared."""
+    """White sheet divided by its own per-channel center resulting in 1.0 at center, <1 toward the
+    corners.  Measures lens AND lamp falloff together; don't assume which until profiles are
+    compared.  Optional smoothing keeps sensor noise in the flat from being copied into every
+    image divided by it."""
     c = center_mean(white_rgb, center_frac)
     if (c > max_center).any():
         warnings.warn(f"white-sheet center is near the ceiling {np.round(c, 3)}; "
@@ -34,10 +44,17 @@ def shading_map_from_white(white_rgb, center_frac=0.10, smooth_sigma=0, max_cent
 
 
 def remove_shading(img_rgb, shading_map, floor=0.05):
+    """Divide out shading. `floor` avoids dividing by ~0 in dark corners."""
     return img_rgb / np.maximum(shading_map, floor)
 
 
+def corner_to_center_ratio(img, frac=0.10):
+    """Per-channel corner/center ratio (1.0 means no shading)."""
+    return corner_mean(img, frac) / center_mean(img, frac)
+
+
 def horizontal_profile(img_rgb, band_frac=0.05):
+    """Mean of a thin band of rows through the center, per channel."""
     h = img_rgb.shape[0]
     d = max(1, int(h * band_frac / 2))
     return img_rgb[h // 2 - d:h // 2 + d].mean(axis=0)        # (w, 3)
@@ -63,3 +80,50 @@ def cos4_model(h, w, camera_spec, bin_factor=2):
     y, x = np.mgrid[0:h, 0:w]
     r2 = (x - (w - 1) / 2) ** 2 + (y - (h - 1) / 2) ** 2
     return (1 + r2 / f_px ** 2) ** -2
+
+def plot_white_and_map(white_rgb, shading_map, title, save_path):
+    fig, axes = plt.subplots(1, 4, figsize=(16, 3.6))
+    # 1. The measurement as a picture. Encode for display; linear data looks too dark.
+    axes[0].imshow(psu.linear_to_srgb(white_rgb))
+    axes[0].set_title("white sheet (camera RGB, no white balance)")
+    # 2. The map, one channel per panel, same scale, so you compare channels honestly.
+    lo, hi = np.percentile(shading_map, [0.5, 99.5])      # robust to single noisy pixels
+    for c, ax in enumerate(axes[1:]):
+        im = ax.imshow(shading_map[..., c], vmin=lo, vmax=hi, cmap="viridis")
+        ax.set_title(f"shading map, {'RGB'[c]}")
+    fig.colorbar(im, ax=axes[1:], fraction=0.02, label="relative to center")
+    fig.suptitle(title)
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def shading_ratios(round_name, white_rgb, shading_map, model, frac=0.10):
+    """Corner divided by center ratios on the white sheet itself, before and after removal."""
+    before = corner_to_center_ratio(white_rgb, frac)
+    after = corner_to_center_ratio(remove_shading(white_rgb, shading_map), frac)
+    row = {"round": round_name}
+    for c, n in enumerate("RGB"):
+        row[f"{n}_before"], row[f"{n}_after"] = before[c], after[c]
+    row["cos4_model"] = corner_mean(model, frac) / center_mean(model, frac)   # 2D input -> scalar
+    return row
+
+def plot_profiles(profiles: dict, model_profile=None, title="", save_path=None):
+    """profiles: {round: (w, 3) array}. Color = channel, linestyle = round."""
+    styles = ["-", "--", ":", "-."]
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    for (name, prof), ls in zip(profiles.items(), styles * 2):
+        x = np.arange(len(prof)) - (len(prof) - 1) / 2          # distance from center, px
+        for c in range(3):
+            ax.plot(x, prof[:, c], ls=ls, color=CHANNEL_COLORS[c], lw=1.3)
+    if model_profile is not None:
+        ax.plot(x, model_profile, color="k", lw=2, alpha=0.6)
+    ax.set_xlabel("distance from image center (quarter-res px)")
+    ax.set_ylabel("relative to center")
+    ax.set_title(title)
+    ch = [Line2D([], [], color=c, label=n) for c, n in zip(CHANNEL_COLORS, "RGB")]
+    rd = [Line2D([], [], color="gray", ls=ls, label=n) for (n, _), ls in zip(profiles.items(), styles * 2)]
+    md = [Line2D([], [], color="k", lw=2, alpha=0.6, label="cos⁴ model")] if model_profile is not None else []
+    ax.legend(handles=ch + rd + md, fontsize=8, ncol=2)
+    if save_path:
+        fig.savefig(save_path, dpi=150)
+    plt.close(fig)

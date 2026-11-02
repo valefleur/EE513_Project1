@@ -7,8 +7,6 @@ import rawpy
 import psu_imaging as psu
 import matplotlib.pyplot as plt
 
-import opencv4 as cv4
-
 import my_library.analyze as analyze
 import my_library.image_metadata as img
 import my_library.photon_transfer_curve as ptc
@@ -17,6 +15,7 @@ import my_library.generate as gen
 import my_library.latex_formatter as tex
 import my_library.shading as shading
 import my_library.catalog as datalog
+import my_library.color_chart as chart
 
 from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
@@ -61,7 +60,7 @@ if __name__ == "__main__":
 
     flor_path = f'{camera_path}{lightroom}{hw}florescent/'
     led_path = f'{camera_path}{lightroom}{hw}led/'
-    incadesent_path = f'{camera_path}{lightroom}{hw}incadesent/'
+    incandesent_path = f'{camera_path}{lightroom}{hw}incandesent/'
     cloudy_path = f'{camera_path}{lightroom}{hw}outdoors_cloudy/'
     shade_path = f'{camera_path}{lightroom}{hw}outdoors_shade/'
 
@@ -69,25 +68,26 @@ if __name__ == "__main__":
         color_sets = [flor_path, led_path]
         rounds = {'florescent': flor_path, 'led': led_path}
     else:
-        color_sets = [flor_path, led_path, incadesent_path, f'{cloudy_path}/set1', f'{cloudy_path}/set2', shade_path]
-        rounds = {'florescent': flor_path, 'led': led_path, 'incadesent': incadesent_path,
+        color_sets = [flor_path, led_path, incandesent_path, f'{cloudy_path}/set1', f'{cloudy_path}/set2', shade_path]
+        rounds = {'florescent': flor_path, 'led': led_path, 'incandesent': incandesent_path,
             'cloudy1': f'{cloudy_path}/set1', 'cloudy2': f'{cloudy_path}/set2', 'shade': shade_path}
 
     output_path = 'output/hw4/'
 
-    flats = {}
+    catalog = datalog.add_clip_stats(datalog.build_catalog(rounds), cam_spec.saturation_dn) # pyright: ignore[reportArgumentType]
 
-    catalog = datalog.build_catalog(rounds, cam_spec.saturation_dn)
+    # HW4-specific data
+    # Differentiate between a color chart and a white flat
+    catalog["kind"] = np.where(catalog["file"].str.contains("_white"), "white", "chart")
+    is_chart = catalog["kind"] == "chart"
+    catalog["chart"] = pd.Series(pd.NA, index=catalog.index, dtype="Int64")
+    catalog.loc[is_chart, "chart"] = catalog[is_chart].groupby("round").cumcount() + 1
+
     datalog.print_inventory(catalog)
-    datalog.check_rounds(catalog)
+    datalog.check_constant_within(catalog, "round", ["iso", "exposure_s", "black_levels"])
+    img.assert_one_camera(catalog["path"].tolist())        # the professor's function, his output
     catalog.to_csv(f"{output_path}catalog.csv", index=False)
 
-
-    # Assert one camera type for all images in all color_sets
-    raws = []
-    for path in color_sets:
-        raws.extend(analyze._list_raw_files(path))
-    img.assert_one_camera(raws)
 
     # Since all captures were from the same camera, we only benefit from looking at the Bayer mosaic once.
     a_directory = Path(color_sets[0])
@@ -99,36 +99,13 @@ if __name__ == "__main__":
         print(f"\n\n~*~*~*~*~*~*~*~*~  Now looking at images taken with {lighting_type} lighting. ~*~*~*~*~*~*~*~")
         output_path_for_lighting = f"{output_path}{lighting_type}/"
 
-        img_data = pd.DataFrame(columns=['file', 'camera', 'exposure_s', 'iso', 'black_levels', 'white_level', 'bayer', 'shape'])
+        round_df = catalog[catalog["round"] == lighting_type]
+        image_paths = round_df["path"].tolist()
+        exposure_times = round_df["exposure"].tolist()
+        raws = [str(p) for p in image_paths]
 
-        # TODO clean up this pre-problems section to make it more useful & concise
-        rows, img_df = img.print_raw_metadata(path_to_images, img_data)
-        # rows = img.print_raw_metadata(path_to_images)
-        # print(f"First row: {rows[0]}")
-        file_names = []
-        exposure_times = []
-        isos = []
-        for row in rows:
-            file_names.append(row['file'])
-            exposure_times.append(img._format_exposure(row['exposure_s']))
-            isos.append(row['iso'])
-        # labels should be every other exposure time, so that the contact sheet is not too cluttered
         labels = ["File Name", "Exposure Time", "ISO"]
-        tex.generate_table([file_names, exposure_times, isos], labels=labels, output_path=f"{output_path_for_lighting}01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
-
-        raws = analyze._list_raw_files(path_to_images)
-
-        image_paths = img.get_image_paths(path_to_images) # TODO ensure it returns the order expected by the dataframe, or sort it to match raws
-
-        first_img = 0
-
-        # From the output of the histogram data, we know the saturation level is 4095.
-        '''
-        TODO rewrite the loop logic so we look at the saturation levels of all images before
-        starting in on the problems and their calculations to use a global saturation level for
-        the camera.
-        '''
-        SATURATION = 4095
+        tex.generate_table([round_df["file"].tolist(), exposure_times, round_df["iso"].tolist()], labels=labels, output_path=f"{output_path_for_lighting}01_exposure_ISO.txt", caption=f"Metadata for {cam} images")
 
         # Problem 1
         problem = "01"
@@ -150,31 +127,16 @@ if __name__ == "__main__":
         your files actually saturate, and the fraction of each frame that reaches it.
         '''
         analyze.contact_sheet(raws, camera=cam, output=output_path_for_lighting, question=problem, labels=exposure_times)
-        # max_brightness_per_img = [] # TODO is max_brightness worth keeping?
         VERBOSE = False
         for i in image_paths:
-            # print the fraction of each frame at saturation
-            clip_report = analyze.clip_report(i, sat=SATURATION)
-            print(f"\nHistogram analysis for {os.path.basename(i)}:")
-            print(f"\tPercentage of pixels at saturation:")
-            if VERBOSE:
-                for k, v in clip_report.items():
-                    if k != 'spike_ratio' and isinstance(v, float):
-                        print(f"\t\t{k}: {v*100:.3f}%")
-            print(f"\t\tSpike ratio: {clip_report['spike_ratio']:.3f}")
+            # print(f"\nHistogram analysis for {os.path.basename(i)}:")
             analyze.histogram(i, output_path_for_lighting, question=problem, VERBOSE=VERBOSE)
-            # max_brightness_point = analyze.histogram(i, set_output_path, question=problem)
-            # max_brightness_per_img.append(max_brightness_point)
 
-        # add the max_brightness to the dataframe
-        # img_df['max_brightness'] = max_brightness_per_img
-
-        # histogram the raw values to look for a spike in the upper half
 
         # Problem 2
         problem = "02"
         print(f"\n**** Problem {problem} ****")
-        print(f'HEAD:\n{img_df.head()}')
+        print(f'HEAD:\n{round_df.head()}')
         '''
         Convert one capture to linear color without demosaicing it. Subtract the black level, divide
         by the span from black up to the saturation value you measured in item 1, and then take each
@@ -187,93 +149,65 @@ if __name__ == "__main__":
         Deliverable: The quarter resolution image displayed, and a statement of the CFA pattern, the
         black level, and the saturation value you used.
         '''
+
+        first_img = 0
         with rawpy.imread(str(raws[first_img])) as raw:
             raw_img = raw.raw_image_visible
             # 1. Convert to linear light
-            black = img_df['black_levels'][first_img][0]
-            # saturation = img_df['max_brightness'][first_img] # Error: don't use max brightness
-            # linear = ll.raw_to_linear_light(raw_img, black_levels=img_df['black_levels'][first_img], saturation_level=img_df['white_level'][first_img]) # WRONG, use saturation level instead of white level
-            linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=SATURATION)
+            black = round_df.iloc[first_img]['black_levels'][0]
+            # saturation = round_df.iloc[first_img]['max_brightness'] # Error: don't use max brightness
+            # linear = ll.raw_to_linear_light(raw_img, black_levels=round_df.iloc[first_img]['black_levels'], saturation_level=round_df.iloc[first_img]['white_level']) # Error: use saturation level instead of white level
+            linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=cam_spec.saturation_dn)
 
             # 2. Resize down 25% by sampling the 2x2 blocks to one pixel
             # using the red site, the mean of the two green sites, and the blue site
             # my camera's CFA pattern comes out to BGGR, so the red site is at (1, 1), the green sites are at (0, 1) and (1, 0), and the blue site is at (0, 0)
             quarter = ll.quarter_rgb(linear, pattern=raw.raw_pattern, color_desc=raw.color_desc)
 
-            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {img_df['file'][first_img]}', f'Quarter resolution linear light image from {img_df['file'][first_img]}', f"{output_path_for_lighting}{problem}_linear_light.png", first_color='gray', second_color=None, SHOW=False)
-
-
-        # # Problem 4
-        # problem = "04"
-        # print(f"\n**** Problem {problem} ****")
-        '''
-        Use OpenCV4 to locate the 24 patches of flat color in the quarter resolution image.  Sample
-        no more than the middle 50% of each patch to avoid the black borders and any other edge
-        effects. Measure the mean and standard deviation of each patch. The standard deviation is a
-        measure of how flat the patch is, and the mean is a measure of its color. The mean should
-        be reported in linear light, not sRGB. The standard deviation should be reported in 8-bit
-        levels and linear light.
-        '''
-
+            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {round_df.iloc[first_img]["file"]}', f'Quarter resolution linear light image from {round_df.iloc[first_img]["file"]}', f"{output_path_for_lighting}{problem}_linear_light.png", first_color='gray', second_color=None, SHOW=False)
 
 
     # Problem 3
     problem = "03"
     print(f"\n**** Problem {problem} ****")
-    for name, white_path in catalog[catalog.kind == "white"].set_index("round").path.items():
-        #print name as all upper case
-        print(f"\nProcessing white image: {str(name).upper()} - {os.path.basename(white_path)}")
+    maps: dict[str, np.ndarray] = dict()
+    profiles: dict[str, np.ndarray] = dict()
+    corner_center_ratios: list[dict] = []
+    FRAC = 0.10
 
-        # Grab the image of the white sheet, which is the last one in the list of raws, and convert it to linear light
-        white_flat_rgb = ll.load_linear_quarter_rgb(white_path, saturation_dn=SATURATION)
-        map_of_white_flat = shading.shading_map_from_white(white_flat_rgb)
-        flats[name] = map_of_white_flat
+    first_white = next(iter(catalog[catalog.kind == "white"]["path"]))
+    h, w = ll.load_linear_quarter_rgb(first_white, cam_spec.saturation_dn).shape[:2]
+    model = shading.cos4_model(h, w, cam_spec, bin_factor=2)      # same for every round, computed once
+
+    for name, white_path in catalog[catalog.kind == "white"].set_index("round")["path"].items():
+        print(f"\nWhite sheet, {str(name).upper()}: {white_path.name}")
+        white_rgb = ll.load_linear_quarter_rgb(white_path, cam_spec.saturation_dn)
+        shading_map = shading.shading_map_from_white(white_rgb, center_frac=FRAC)
+        maps[str(name)], profiles[str(name)] = shading_map, shading.horizontal_profile(shading_map)
+
+        clipped = (white_rgb >= 0.999).astype(float)
+        print("clipped fraction, whole frame (R,G,B):", np.round(clipped.mean(axis=(0, 1)), 4))
+        print("clipped fraction, center box  (R,G,B):", np.round(shading.center_mean(clipped, FRAC), 4))
+        print("map percentiles [1, 50, 99] per channel:\n",
+            np.round(np.percentile(shading_map, [1, 50, 99], axis=(0, 1)).T, 3))
+
         # plot a linearlized white flat image next to a normalized white flat image
-        plot_two_images(white_flat_rgb, map_of_white_flat, f'White flat in linear light from {img_df['file'][len(img_df)-1]}', f'Normalized white flat in linear light from {img_df['file'][len(img_df)-1]}', f"{output_path_for_lighting}{problem}_white_flat_normalized.png", first_color=None, second_color=None, SHOW=False)
+        # Error: Plotting the shading map is not realistic.  It's a map of the per-channel gain.  It's not an image, per se.
+        # To be more honest and useful, show the shading map per color channel and compare to the linearized white flat in quarter RGB.
+        # plot_two_images(white_flat_rgb, map_of_white_flat, f'White flat in linear light from {img_data['file'][len(img_data)-1]}', f'Normalized white flat in linear light from {img_data['file'][len(img_data)-1]}', f"{output_path_for_lighting}{problem}_white_flat_normalized.png", first_color=None, second_color=None, SHOW=False)
+        shading.plot_white_and_map(white_rgb, shading_map, f"White sheet, {name}",
+                                f"{output_path}{problem}_{name}_white_sheet.png")
+        corner_center_ratios.append(shading.shading_ratios(name, white_rgb, shading_map, model, FRAC))
 
-        analytic_lens_shading = shading.cos4_model(white_flat_rgb.shape[0], white_flat_rgb.shape[1], camera_spec=cam_spec, bin_factor=2)
-        # print(f"Analytic lens shading mean: {analytic_lens_shading.mean(axis=(0,1))}")
+    print(f"DELIVERABLE {problem}b: The ratio of the corner region to the center region on a white flat both before and after dividing out the shading map, per color channel...")
+    print(pd.DataFrame(corner_center_ratios).set_index("round").round(3))
+    print(f"DELIVERABLE {problem}c: Plotting the central horizontal profiles from each round on the same axis...")
+    shading.plot_profiles(profiles, model_profile=model[h // 2],
+                        title="Horizontal profile, normalized to center",
+                        save_path=f"{output_path}{problem}_horizontal_profiles.png")
 
-        fraction = 0.10
-        print(f"Percentage of pixels per RGB channel with value >= 0.999, i.e. clipping: {(white_flat_rgb >= 0.999).mean(axis=(0,1))}")
-        print(f"The per RGB channel mean of the center {fraction*100:.0f}% of the shading map of the white flat: {shading.center_mean(map_of_white_flat, frac=fraction)}")
 
-        '''
-        with rawpy.imread(str(raws[-1])) as raw:
-            raw_img = raw.raw_image_visible
-            black = img_df['black_levels'][len(img_df)-1][0]
-            # saturation = img_df['max_brightness'][len(img_df)-1] # Error: Don't use max brightness
-            white_flat_linear = ll.raw_to_linear_light(raw_img, black_level=black, saturation_level=SATURATION)
 
-            # Determine the center (ideally we'd use the optical axis center principle point, but we don't have that info)
-            height, width = white_flat_linear.shape
-            print(f'White flat in linear light height: {height}, width: {width}')
-            center_x, center_y = width // 2, height // 2
-            x = np.arange(width) - center_x
-            y = np.arange(height) - center_y
-
-            # Calculate the distance squarted from center for each pixel
-            xv, yv = np.meshgrid(x, y)
-            distance_squared = xv**2 + yv**2
-
-            # Normalize the flat field to its own center and divide, treating each of the three channels separately rather than applying one gray correction.
-            # white_flat_linear = white_flat_linear / white_flat_linear[center_y, center_x]
-            # white_flat_linear_normalized = ll.normalize_flat(white_flat_linear) # Error: Use the quarter-res RGB image so we get the three channels separately rather than applying one gray correction.
-            white_flat_rgb = ll.quarter_rgb(white_flat_linear, pattern=raw.raw_pattern, color_desc=raw.color_desc)
-            white_flat_linear_normalized = ll.normalize_flat(white_flat_rgb)
-
-            # Plot white_flat_linear next to white_flat_linear_normalized
-            plot_two_images(white_flat_rgb, white_flat_linear_normalized, f'White flat in linear light from {img_df['file'][len(img_df)-1]}', f'Normalized white flat in linear light from {img_df['file'][len(img_df)-1]}', f"{set_output_path}{problem}_white_flat_normalized.png", first_color='gray', second_color='gray', SHOW=True)
-
-            # Get an analytical calculate cos(theta) as the distance from the center of the image
-            # to each pixel divided by the focal length in pixels, and raise it to the fourth
-            # power to get cos^4(theta) for each pixel.
-            # This is the the theoretical lens shading of the camera lens for comparison with the
-            # measured shading map from the white flat image.  A shading map will include real world
-            # effects such as shading from the lamps, improperly placed lens hoods, etc. that are
-            # not part of the theoretical lens shading.
-            analytic_lens_shading = gen.cos4_map(white_flat_rgb.shape[0], white_flat_rgb.shape[1], bin_factor=2)
-        '''
 
 
         # # Problem 3
@@ -286,5 +220,5 @@ if __name__ == "__main__":
         # print(f"\n**** Problem {problem} ****")
 
 
-cols = ["round", "kind", "chart", "file", "iso", "exposure"]
-tex.generate_table([catalog[c].tolist() for c in cols], labels=cols, caption="All data", output_path=f"{output_path}catalog_table.txt")
+    cols = ["round", "kind", "chart", "file", "iso", "exposure"]
+    tex.generate_table([catalog[c].tolist() for c in cols], labels=cols, caption="All data", output_path=f"{output_path}catalog_table.txt")

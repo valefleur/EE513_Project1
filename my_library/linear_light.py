@@ -87,14 +87,21 @@ def plot_reduction(res, plot_path=None, title=""):
     return fig
 
 
-def raw_to_linear_light(raw_img, black_level, saturation_level):
-    """Convert a raw image to linear light in the range 0.0 to 1.0.
+def raw_to_linear_light(raw_img, black_level, saturation_level, clip=True):
+    """Convert a raw image to linear light, 0.0 at black and 1.0 at saturation.
 
     Subtracts the black level, divides by the span from black to
-    white, and returns the linearized image as a float array.
-    """
+    saturation, and returns the linearized image as a float array.
 
-    return np.clip((raw_img.astype(float) - black_level) / (saturation_level - black_level), 0, 1)
+    clip=True  limits the result to [0, 1]: right for display and for anything that
+               needs a valid pixel value.
+    clip=False keeps values below 0 (read noise on pixels near black). Use it for
+               MEASUREMENTS that average many pixels: clipping the negative half of
+               the noise to 0 biases a dark mean upward, like half-wave rectifying
+               zero-mean noise adds a DC offset.
+    """
+    linear = (raw_img.astype(float) - black_level) / (saturation_level - black_level)
+    return np.clip(linear, 0, 1) if clip else linear
 
 
 def quarter_rgb(linear, pattern, color_desc):
@@ -118,13 +125,14 @@ def quarter_rgb(linear, pattern, color_desc):
     return out
 
 
-def load_linear_quarter_rgb(path, saturation_dn):
-    """Raw file -> black-subtracted, saturation-normalized, quarter-res RGB. No interpolation."""
+def load_linear_quarter_rgb(path, saturation_dn, clip=True):
+    """Raw file -> black-subtracted, saturation-normalized, quarter-res RGB. No interpolation.
+    See raw_to_linear_light() for when to pass clip=False."""
     import rawpy
     with rawpy.imread(str(path)) as raw:
         blacks = set(raw.black_level_per_channel)
         assert len(blacks) == 1, f"per-channel black levels differ: {blacks}"
-        lin = raw_to_linear_light(raw.raw_image_visible, blacks.pop(), saturation_dn)
+        lin = raw_to_linear_light(raw.raw_image_visible, blacks.pop(), saturation_dn, clip=clip)
         return quarter_rgb(lin, raw.raw_pattern, raw.color_desc)
 
 

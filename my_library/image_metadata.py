@@ -234,6 +234,7 @@ def print_raw_metadata(target, df, suffixes=RAW_SUFFIXES):
     Ends with a summary of the distinct (camera, ISO) combinations found, so a
     mixed-ISO folder is obvious. Returns the list of metadata dicts.
     """
+    rows = []
     target = Path(target)
     if target.is_dir():
         paths = sorted(p for p in target.rglob("*")
@@ -242,9 +243,8 @@ def print_raw_metadata(target, df, suffixes=RAW_SUFFIXES):
         paths = [target]
     if not paths:
         print(f"No raw files found in {target}")
-        return []
+        return rows
 
-    rows = []
     print(f"{'file':20s} {'exposure':>10s} {'ISO':>5s}  {'black level (per channel)':26s} "
           f"{'white':>6s} {'bayer':>5s}  camera")
     for p in paths:
@@ -272,7 +272,7 @@ def print_raw_metadata(target, df, suffixes=RAW_SUFFIXES):
     for (camera, iso), n in sorted(combos.items(), key=lambda kv: (str(kv[0][0]), kv[0][1] or 0)):
         print(f"  {n:3d} x ISO {iso if iso is not None else '?'}  {camera or '?'}")
 
-    return rows, df
+    return rows
 
 def green_patch(path, size=128, which=0):
     """Center size x size patch of one green plane of a raw file.

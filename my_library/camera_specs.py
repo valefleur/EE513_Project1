@@ -15,4 +15,10 @@ class CameraSpec:
         """Focal length in (binned) pixels."""
         return self.focal_mm * 1000 / (self.pitch_um * bin_factor)
 
-IPHONE_16_PRO_MAX = CameraSpec("iPhone 16 Pro Max main", 6.765, 1.78, 2.434, 4095)
+IPHONE_16_PRO_MAX = CameraSpec(
+    name="iPhone 16 Pro Max main",
+    focal_mm=6.765,
+    f_number=1.78,
+    pitch_um=2.434,
+    saturation_dn=4095,
+)
