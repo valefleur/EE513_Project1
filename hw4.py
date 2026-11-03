@@ -19,7 +19,7 @@ import my_library.color_chart as chart
 
 from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
-def plot_two_images(first, second, first_title, second_title, save_path, first_color=None, second_color=None, SHOW=False):
+def plot_two_images(first, second, first_title, second_title, save_path, overall_title=None,first_color=None, second_color=None, SHOW=False):
     fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(12, 6))
     ax[0].set_title(first_title)
     if first_color:
@@ -38,6 +38,9 @@ def plot_two_images(first, second, first_title, second_title, save_path, first_c
     ax[1].xaxis.tick_top()
     ax[1].set_xlabel('Columns')
     ax[1].set_ylabel('Rows')
+
+    if overall_title:
+        fig.suptitle(overall_title)
 
     plt.tight_layout()
     if SHOW:
@@ -104,18 +107,18 @@ if __name__ == "__main__":
         print(f"\tWARNING measured saturation {min(found)} differs from "
               f"cam_spec.saturation_dn = {cam_spec.saturation_dn}. Update camera_specs.py, "
               "because linear light and every clip mask downstream use that value.")
-    print(f"DELIVERABLE {problem}: fraction of each frame at or above saturation:")
-    print(catalog[["round", "kind", "chart", "file", "sat_frame_pct"] +
-                  [f"sat_{ch}_pct" for ch in measured_sat]].to_string(
-                      index=False, float_format="{:.3f}".format))
-    # TODO NOW: This should be a LaTeX table
-
+    # DELIVERABLE 01: the file list as a LaTeX table, columns in the order the deliverable
+    # names them. Per-CFA-site fractions (sat_<site>_pct) are in catalog.csv.
+    print(f"DELIVERABLE {problem}: files with round, chart, ISO, exposure time and fraction "
+          f"at saturation, written to {output_path}{problem}_inventory.txt")
     chart_label = [str(c) if pd.notna(c) else "white" for c in catalog["chart"]]
-    tex.generate_table([catalog["round"].tolist(), chart_label, catalog["file"].tolist(),
+    tex.generate_table([catalog["file"].tolist(), catalog["round"].tolist(), chart_label,
                         catalog["iso"].tolist(), catalog["exposure"].tolist(),
                         [f"{v:.3f}" for v in catalog["sat_frame_pct"]]],
-                       labels=["Round", "Chart", "File", "ISO", "Exposure", "% at saturation"],
-                       caption=f"Captures from the {cam_spec.name}, all rounds",
+                       labels=["File", "Round", "Chart", "ISO", "Exposure time",
+                               "Fraction at saturation (%)"],
+                       caption=f"Captures from the {cam_spec.name}: fraction of each frame "
+                               "at or above the measured saturation",
                        output_path=f"{output_path}{problem}_inventory.txt",
                        escape=True, VERBOSE=False)
     sites = list(measured_sat)
@@ -215,7 +218,7 @@ if __name__ == "__main__":
             # my camera's CFA pattern comes out to BGGR, so the red site is at (1, 1), the green sites are at (0, 1) and (1, 0), and the blue site is at (0, 0)
             quarter = ll.quarter_rgb(linear, pattern=raw.raw_pattern, color_desc=raw.color_desc)
 
-            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {round_df.iloc[first_img]["file"]}', f'Quarter resolution linear light image from {round_df.iloc[first_img]["file"]}', f"{output_path_for_lighting}{problem}_{lighting_type}_quarter_comparison.png", first_color='gray', second_color=None, SHOW=False)
+            plot_two_images(linear, psu.linear_to_srgb(quarter), f'Original image in linear light from {round_df.iloc[first_img]["file"]}', f'Quarter resolution linear light image from {round_df.iloc[first_img]["file"]}', f"{output_path_for_lighting}{problem}_{lighting_type}_quarter_comparison.png", overall_title=f'Full res LL to quarter-res RGB from {round_df.iloc[first_img]["file"]}', first_color='gray', second_color=None, SHOW=False)
 
 
         # Problem 4
@@ -296,12 +299,31 @@ if __name__ == "__main__":
                                 f"{output_path}{problem}_{name}_white_sheet.png")
         corner_center_ratios.append(shading.shading_ratios(name, white_rgb, shading_map, model, FRAC))
 
+        print(f"DELIVERABLE {problem}a: The quarter-resolution RGB image before and after removing the shading map...")
+        plot_two_images(psu.linear_to_srgb(white_rgb), psu.linear_to_srgb(shading.remove_shading(white_rgb, shading_map)),
+                        f'White sheet in linear light from {name}', f'White sheet after removing shading map from {name}', f"{output_path}{problem}a_{name}_white_sheet_corrected.png",
+                        overall_title=f'White sheet correction from {name}', first_color=None, second_color=None, SHOW=False)
+
     print(f"DELIVERABLE {problem}b: The ratio of the corner region to the center region on a white flat both before and after dividing out the shading map, per color channel...")
-    print(pd.DataFrame(corner_center_ratios).set_index("round").round(3))
+    # print(pd.DataFrame(corner_center_ratios).set_index("round").round(3))
+    ratios_df = pd.DataFrame(corner_center_ratios)
+    print(ratios_df.set_index("round").round(3))
+    # One table for every round, so the file name has no round in it.
+    tex.generate_table([ratios_df["round"].tolist()] +
+                       [[f"{v:.3f}" for v in ratios_df[f"{c}_{when}"]]
+                        for c in "RGB" for when in ("before", "after")] +
+                       [[f"{v:.3f}" for v in ratios_df["cos4_model"]]],
+                       labels=["Round", "R before", "R after", "G before", "G after",
+                               "B before", "B after", "cos$^4$ model"],
+                       caption="Corner-to-center ratio on the white flat, per color channel, "
+                               "before and after dividing out the shading map",
+                       output_path=f"{output_path}{problem}b_corner_to_center_ratios.txt",
+                       VERBOSE=False)
+
     print(f"DELIVERABLE {problem}c: Plotting the central horizontal profiles from each round on the same axis...")
     shading.plot_profiles(profiles, model_profile=model[h // 2],
                         title="Horizontal profile, normalized to center",
-                        save_path=f"{output_path}{problem}_horizontal_profiles.png")
+                        save_path=f"{output_path}{problem}c_horizontal_profiles.png")
 
 
 
