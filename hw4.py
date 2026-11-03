@@ -514,6 +514,63 @@ if __name__ == "__main__":
     print(f"DELIVERABLE {problem}d: written explanation of the residual (in the report)")
 
 
+    # Problem 9 (Part 3): items 5-8 independently for each chart of a round
+    problem = "09"
+    print(f"\n**** Problem {problem} ****")
+    chart_matrices = {}                       # (round, chart) -> M fit to that chart alone
+    for rnd in dict.fromkeys(r for r, _ in balanced_means):
+        round_dir = f"{output_path}{rnd}/"
+        rows, eqs, Ms = [], [], {}
+        for (r, chart_n), balanced in balanced_means.items():
+            if r != rnd:
+                continue
+            g = all_patches[(all_patches["round"] == rnd) & (all_patches["chart"] == chart_n)]
+            usable, file = g["usable"].to_numpy(), g["file"].iloc[0]
+            scaled, _ = wb.scale_to_reference(balanced, ref_XYZ, usable)
+            M = wb.fit_matrix(scaled, ref_XYZ, usable)             # this chart only
+            chart_matrices[(rnd, chart_n)] = M
+            Ms[f"chart {chart_n}"] = M
+            de, _ = wb.delta_e_vs_reference(scaled, ref_XYZ, usable, M=M)
+            worst = int(np.argmax(np.where(usable, de, -np.inf)))
+            rows.append(dict(chart=chart_n, file=file, n=int(usable.sum()), mean=de[usable].mean(),
+                             worst=de[worst], worst_patch=f"{worst + 1} {psu.COLORCHECKER_NAMES[worst]}"))
+            eqs.append(wb.matrix_latex(M, M.sum(axis=1), wb.white_xyz_y1(ref_XYZ),
+                                       f"Problem 9, {rnd} chart {chart_n} ({file})")
+                       .replace("M = ", f"M_{{{chart_n}}} = ")
+                       .replace("M\\begin", f"M_{{{chart_n}}}\\begin"))
+            print(f"\t{rnd} chart {chart_n} ({file}): matrix fit to this chart alone\n"
+                  f"{np.array2string(M, precision=4, suppress_small=True)}")
+        df9 = pd.DataFrame(rows)
+        print(f"DELIVERABLE {problem}a: {rnd} mean and worst CIEDE2000 per chart, each with its own "
+              f"matrix -> {round_dir}{problem}a_{rnd}_per_chart_dE.txt")
+        print(df9.to_string(index=False, float_format="{:.2f}".format))
+        tex.generate_table([df9["chart"].tolist(), df9["file"].tolist(), df9["n"].tolist(),
+                            [f"{v:.2f}" for v in df9["mean"]], [f"{v:.2f}" for v in df9["worst"]],
+                            df9["worst_patch"].tolist()],
+                           labels=["Chart", "File", "Patches", "Mean dE00", "Worst dE00", "Worst patch"],
+                           caption=f"Each chart under {rnd} light fit independently (white balance, "
+                                   f"matrix and error). Metric: CIEDE2000, usable patches.",
+                           output_path=f"{round_dir}{problem}a_{rnd}_per_chart_dE.txt",
+                           escape=True, VERBOSE=False)
+        print(f"DELIVERABLE {problem}b: {rnd} the three matrices -> {round_dir}{problem}b_{rnd}_matrices.txt")
+        with open(f"{round_dir}{problem}b_{rnd}_matrices.txt", "w") as f:
+            f.write("\n".join(eqs))
+        cols = wb.column_comparison(Ms)
+        print(f"DELIVERABLE {problem}c: {rnd} matrix columns compared as directions "
+              f"-> {round_dir}{problem}c_{rnd}_column_angles.txt")
+        print(cols.to_string(index=False, float_format="{:.3f}".format))
+        tex.generate_table([cols["pair"].tolist()] +
+                           [[f"{v:.2f}" for v in cols[f"angle_{c}"]] for c in "RGB"] +
+                           [[f"{v:.3f}" for v in cols[f"length_{c}"]] for c in "RGB"],
+                           labels=["Pair", "R angle (deg)", "G angle (deg)", "B angle (deg)",
+                                   "R length ratio", "G length ratio", "B length ratio"],
+                           caption=f"Columns of the per-chart matrices under {rnd} light compared as "
+                                   f"directions: angle between corresponding columns, and ratio of "
+                                   f"their lengths.",
+                           output_path=f"{round_dir}{problem}c_{rnd}_column_angles.txt",
+                           escape=True, VERBOSE=False)
+
+
 
 
 

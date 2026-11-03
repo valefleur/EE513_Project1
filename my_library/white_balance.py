@@ -200,3 +200,26 @@ def plot_de_before_after(rows, names, title, save_path):
     fig.tight_layout()
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
+
+
+# ----------------------------------------------------------------------------- Problem 9
+def column_comparison(matrices):
+    """Compare matrices column by column as DIRECTIONS.
+
+    matrices: {label: 3x3 M}. Column j of M is the XYZ direction camera channel j maps to.
+    For each pair of matrices and each column: the angle between the two columns in
+    degrees, and the ratio of their lengths. Neither blows up when an element is near
+    zero, unlike element-by-element relative differences.
+    """
+    import itertools
+    import pandas as pd
+    rows = []
+    for (la, A), (lb, B) in itertools.combinations(matrices.items(), 2):
+        row = {"pair": f"{la} vs {lb}"}
+        for j, ch in enumerate("RGB"):
+            a, b = A[:, j], B[:, j]
+            cos = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+            row[f"angle_{ch}"] = float(np.degrees(np.arccos(np.clip(cos, -1, 1))))
+            row[f"length_{ch}"] = float(np.linalg.norm(b) / np.linalg.norm(a))
+        rows.append(row)
+    return pd.DataFrame(rows)
