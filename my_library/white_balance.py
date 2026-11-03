@@ -171,3 +171,32 @@ def comparison_figure(cam_raw, cam_balanced, M, ref_XYZ, illuminant_xy, usable, 
     fig.tight_layout()
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
+
+
+# ----------------------------------------------------------------------------- Problem 8
+def plot_de_before_after(rows, names, title, save_path):
+    """rows: list of (chart label, dE before, dE after, usable). One panel per chart,
+    before and after bars per patch; clipped patches are left out and marked."""
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(len(rows), 1, figsize=(13, 2.6 * len(rows) + 0.8),
+                             sharex=True, squeeze=False)
+    x = np.arange(24)
+    for ax, (label, before, after, usable) in zip(axes[:, 0], rows):
+        b = np.where(usable, before, np.nan)
+        a = np.where(usable, after, np.nan)
+        ax.bar(x - 0.2, b, 0.4, color="#999999", label="before (no matrix, sRGB primaries)")
+        ax.bar(x + 0.2, a, 0.4, color="#0072B2", label="after (fitted 3x3 matrix)")
+        for p in np.nonzero(~usable)[0]:
+            ax.text(p, 0.3, "clipped", rotation=90, ha="center", va="bottom", fontsize=7, color="#D55E00")
+        ax.set_ylabel("$\\Delta E_{00}$")
+        ax.set_title(f"{label}: mean {np.nanmean(b):.2f} -> {np.nanmean(a):.2f}, "
+                     f"worst {np.nanmax(b):.2f} -> {np.nanmax(a):.2f}", fontsize=9)
+        ax.grid(axis="y", alpha=0.3)
+    axes[0, 0].legend(fontsize=8, loc="upper left")
+    axes[-1, 0].set_xticks(x)
+    axes[-1, 0].set_xticklabels([f"{k + 1} {n}" for k, n in enumerate(names)], rotation=60,
+                                ha="right", fontsize=8)
+    fig.suptitle(title + " (metric: CIEDE2000)")
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)

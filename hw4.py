@@ -462,6 +462,58 @@ if __name__ == "__main__":
                                  f"{round_dir}{problem}_{rnd}_chart{chart_n}_comparison.png")
 
 
+    # Problem 8: error after the matrix, per patch, and which patches stay worst
+    problem = "08"
+    print(f"\n**** Problem {problem} ****")
+    summary_rows = []
+    for rnd, M in color_matrices.items():
+        round_dir = f"{output_path}{rnd}/"
+        plot_rows, after_all = [], []
+        for (r, chart_n), balanced in balanced_means.items():
+            if r != rnd:
+                continue
+            usable = all_patches[(all_patches["round"] == rnd) &
+                                 (all_patches["chart"] == chart_n)]["usable"].to_numpy()
+            scaled, _ = wb.scale_to_reference(balanced, ref_XYZ, usable)
+            before, _ = wb.delta_e_vs_reference(scaled, ref_XYZ, usable)        # sRGB primaries
+            after, _ = wb.delta_e_vs_reference(scaled, ref_XYZ, usable, M=M)    # fitted matrix
+            plot_rows.append((f"{rnd} chart {chart_n}", before, after, usable))
+            after_all.append(np.where(usable, after, np.nan))
+            worst3 = np.argsort(np.where(usable, after, -np.inf))[::-1][:3]
+            summary_rows.append(dict(round=rnd, chart=chart_n, n=int(usable.sum()),
+                                     mean_before=before[usable].mean(), worst_before=before[usable].max(),
+                                     mean_after=after[usable].mean(), worst_after=after[usable].max(),
+                                     worst3=", ".join(f"{k + 1} {psu.COLORCHECKER_NAMES[k]}" for k in worst3)))
+        print(f"DELIVERABLE {problem}a: per-patch CIEDE2000 before and after, {rnd} "
+              f"-> {round_dir}{problem}a_{rnd}_dE_before_after.png")
+        wb.plot_de_before_after(plot_rows, psu.COLORCHECKER_NAMES,
+                                f"Per-patch error before and after the color matrix, {rnd}",
+                                f"{round_dir}{problem}a_{rnd}_dE_before_after.png")
+        # Worst patches for the round: mean over its charts, ignoring clipped values.
+        stack = np.vstack(after_all)
+        n_ok = np.sum(~np.isnan(stack), axis=0)          # patches clipped on every chart: 0
+        round_mean = np.where(n_ok > 0, np.nansum(stack, axis=0) / np.maximum(n_ok, 1), np.nan)
+        worst_round = np.argsort(np.nan_to_num(round_mean, nan=-1))[::-1][:3]
+        print(f"DELIVERABLE {problem}c: worst patches after the matrix, {rnd} (mean over charts): " +
+              ", ".join(f"{k + 1} {psu.COLORCHECKER_NAMES[k]} ({round_mean[k]:.2f})" for k in worst_round))
+
+    summary = pd.DataFrame(summary_rows)
+    print(f"DELIVERABLE {problem}b: mean and worst CIEDE2000 before and after the matrix "
+          f"-> {output_path}{problem}b_dE_before_after.txt")
+    print(summary.to_string(index=False, float_format="{:.2f}".format))
+    tex.generate_table([summary["round"].tolist(), summary["chart"].tolist(), summary["n"].tolist()] +
+                       [[f"{v:.2f}" for v in summary[c]] for c in
+                        ("mean_before", "worst_before", "mean_after", "worst_after")] +
+                       [summary["worst3"].tolist()],
+                       labels=["Round", "Chart", "Patches", "Mean before", "Worst before",
+                               "Mean after", "Worst after", "Three worst after"],
+                       caption="CIEDE2000 over usable patches before (balanced camera RGB treated as "
+                               "linear sRGB) and after the fitted 3x3 color matrix.",
+                       output_path=f"{output_path}{problem}b_dE_before_after.txt",
+                       escape=True, VERBOSE=False)
+    print(f"DELIVERABLE {problem}d: written explanation of the residual (in the report)")
+
+
 
 
 
