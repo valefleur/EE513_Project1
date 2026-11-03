@@ -518,6 +518,7 @@ if __name__ == "__main__":
     problem = "09"
     print(f"\n**** Problem {problem} ****")
     chart_matrices = {}                       # (round, chart) -> M fit to that chart alone
+    per_chart_results = {}                    # round -> Problem 9 table, for Problem 10
     for rnd in dict.fromkeys(r for r, _ in balanced_means):
         round_dir = f"{output_path}{rnd}/"
         rows, eqs, Ms = [], [], {}
@@ -541,6 +542,7 @@ if __name__ == "__main__":
             print(f"\t{rnd} chart {chart_n} ({file}): matrix fit to this chart alone\n"
                   f"{np.array2string(M, precision=4, suppress_small=True)}")
         df9 = pd.DataFrame(rows)
+        per_chart_results[rnd] = df9
         print(f"DELIVERABLE {problem}a: {rnd} mean and worst CIEDE2000 per chart, each with its own "
               f"matrix -> {round_dir}{problem}a_{rnd}_per_chart_dE.txt")
         print(df9.to_string(index=False, float_format="{:.2f}".format))
@@ -569,6 +571,56 @@ if __name__ == "__main__":
                                    f"their lengths.",
                            output_path=f"{round_dir}{problem}c_{rnd}_column_angles.txt",
                            escape=True, VERBOSE=False)
+
+
+    # Problem 10: chart-to-chart spread as the uncertainty; the color entries of results.json
+    problem = "10"
+    print(f"\n**** Problem {problem} ****")
+    import json
+    for rnd, df9 in per_chart_results.items():
+        round_dir = f"{output_path}{rnd}/"
+        before = de_df[de_df["round"] == rnd].set_index("chart")["mean"].reindex(df9["chart"]).to_numpy()
+        after = df9["mean"].to_numpy()
+        # Uncertainty = sample standard deviation over the charts (ddof=1): the scatter of one
+        # chart's result. With three charts this is itself only a rough estimate.
+        stats = {name: dict(mean=v.mean(), std=v.std(ddof=1), lo=v.min(), hi=v.max())
+                 for name, v in (("before", before), ("after", after))}
+        worst_counts = df9["worst_patch"].value_counts()
+        worst_patch = worst_counts.index[0]
+        worst_vals = df9.loc[df9["worst_patch"] == worst_patch, "worst"].to_numpy()
+        a = stats["after"]
+        print(f"DELIVERABLE {problem}a: {rnd} mean CIEDE2000 after correction = "
+              f"{a['mean']:.2f} +/- {a['std']:.2f} (sample std over {len(after)} charts; "
+              f"range {a['lo']:.2f} to {a['hi']:.2f}). Before correction: "
+              f"{stats['before']['mean']:.2f} +/- {stats['before']['std']:.2f}. "
+              f"-> {round_dir}{problem}a_{rnd}_dE_uncertainty.txt")
+        tex.generate_table([["Before correction (no matrix)", "After correction (per-chart matrix)"]] +
+                           [[f"{stats[k][c]:.2f}" for k in ("before", "after")]
+                            for c in ("mean", "std", "lo", "hi")],
+                           labels=["Mean $\\Delta E_{00}$", "Mean over charts", "Std (charts)", "Min", "Max"],
+                           caption=f"Mean CIEDE2000 under {rnd} light across {len(after)} nominally "
+                                   f"identical charts. Uncertainty: sample standard deviation across charts.",
+                           output_path=f"{round_dir}{problem}a_{rnd}_dE_uncertainty.txt",
+                           escape=False, VERBOSE=False)
+        # Keys and format from the Project 1 results.template.json: [value, uncertainty],
+        # with the uncertainty taken as the sample std across this round's charts.
+        def pair(v):
+            return [round(float(v.mean()), 2), round(float(v.std(ddof=1)), 2)]
+        color_entries = {
+            "delta_e_metric": "CIEDE2000",
+            "colorchecker_reference_set": wb.REFERENCE,
+            "delta_e_mean_before_ccm": pair(before),
+            "delta_e_mean_after_ccm": pair(after),
+            "delta_e_worst_after_ccm": pair(df9["worst"].to_numpy()),
+        }
+        with open(f"{round_dir}{problem}b_{rnd}_results_color.json", "w") as f:
+            json.dump(color_entries, f, indent=2)
+        print(f"DELIVERABLE {problem}b: {rnd} color entries for results.json, "
+              f"[value, uncertainty] -> {round_dir}{problem}b_{rnd}_results_color.json")
+        print(json.dumps(color_entries, indent=2))
+        print(f"\tworst patch after correction was {worst_patch} on {worst_counts.iloc[0]} of "
+              f"{len(df9)} charts, CIEDE2000 {worst_vals.mean():.2f} +/- "
+              f"{(worst_vals.std(ddof=1) if len(worst_vals) > 1 else 0):.2f}")
 
 
 
