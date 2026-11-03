@@ -16,6 +16,7 @@ import my_library.latex_formatter as tex
 import my_library.shading as shading
 import my_library.catalog as datalog
 import my_library.color_chart as chart
+import my_library.white_balance as wb
 
 from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
@@ -324,6 +325,58 @@ if __name__ == "__main__":
     shading.plot_profiles(profiles, model_profile=model[h // 2],
                         title="Horizontal profile, normalized to center",
                         save_path=f"{output_path}{problem}c_horizontal_profiles.png")
+
+
+    # Problem 5: white balance gains from an unclipped mid gray
+    problem = "05"
+    print(f"\n**** Problem {problem} ****")
+    ref_names, ref_XYZ, ref_illuminant_xy = wb.load_reference()    # used through Part 2
+    print(f"Reference: {wb.REFERENCE}. Numbering check: "
+          f"{wb.check_numbering(ref_names, psu.COLORCHECKER_NAMES)}")
+    print("Orientation of every chart was confirmed by the Problem 4 checks "
+          "(darkest patch is #24, usable neutrals darken in order and share one color).")
+
+    gain_rows = []
+    balanced_means = {}                      # (round, chart) -> 24 x 3, for later problems
+    for (rnd, chart_n), g in all_patches.groupby(["round", "chart"], sort=False):
+        means = g[["R", "G", "B"]].to_numpy()
+        usable = g["usable"].to_numpy()
+        k = wb.pick_gray(usable)
+        if k is None:
+            print(f"{rnd} chart {chart_n}: no usable mid gray, skipped")
+            continue
+        gains = wb.gains_from_gray(means[k])
+        balanced = means * gains
+        balanced_means[(rnd, chart_n)] = balanced
+        resid, used = wb.neutral_residual(balanced, usable)
+        gain_rows.append(dict(round=rnd, chart=chart_n, gray=f"{k + 1} {psu.COLORCHECKER_NAMES[k]}",
+                              gR=gains[0], gG=gains[1], gB=gains[2], resid=resid,
+                              neutrals=", ".join(map(str, used))))
+
+        print(f"DELIVERABLE {problem}b: patch means after balancing, {rnd} chart {chart_n} "
+              f"-> {output_path}{problem}b_{rnd}_chart{chart_n}_balanced_means.txt")
+        tex.generate_table([list(range(1, 25)), list(psu.COLORCHECKER_NAMES)] +
+                           [[f"{v:.4f}" for v in balanced[:, j]] for j in range(3)] +
+                           [["yes" if u else "no" for u in usable]],
+                           labels=["Patch", "Name", "R", "G", "B", "Usable"],
+                           caption=f"Patch means after white balance (gains from patch {k + 1}, "
+                                   f"{psu.COLORCHECKER_NAMES[k]}), {rnd} chart {chart_n}",
+                           output_path=f"{output_path}{problem}b_{rnd}_chart{chart_n}_balanced_means.txt",
+                           escape=True, VERBOSE=False)
+
+    gains_df = pd.DataFrame(gain_rows)
+    print(f"DELIVERABLE {problem}a: white balance gains normalized to green "
+          f"-> {output_path}{problem}a_white_balance_gains.txt")
+    print(gains_df.to_string(index=False, float_format="{:.3f}".format))
+    tex.generate_table([gains_df["round"].tolist(), gains_df["chart"].tolist(), gains_df["gray"].tolist()] +
+                       [[f"{v:.3f}" for v in gains_df[c]] for c in ("gR", "gG", "gB", "resid")],
+                       labels=["Round", "Chart", "Gray patch used", "R gain", "G gain", "B gain",
+                               "Max neutral error"],
+                       caption="White balance gains normalized to green, set from an unclipped mid gray. "
+                               "Max neutral error: largest $|R/G-1|$ or $|B/G-1|$ over the other usable "
+                               "neutrals 19-23 after balancing.",
+                       output_path=f"{output_path}{problem}a_white_balance_gains.txt",
+                       escape=True, VERBOSE=False)
 
 
 
