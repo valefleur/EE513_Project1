@@ -418,6 +418,50 @@ if __name__ == "__main__":
                        escape=False, VERBOSE=False)
 
 
+    # Problem 7: least squares 3x3 matrix, white balanced camera RGB -> reference XYZ
+    problem = "07"
+    print(f"\n**** Problem {problem} ****")
+    white_target = wb.white_xyz_y1(ref_XYZ)              # M @ [1, 1, 1] if neutrals are preserved
+    color_matrices = {}                                  # round -> M, for later problems
+    for rnd in dict.fromkeys(r for r, _ in balanced_means):
+        round_dir = f"{output_path}{rnd}/"
+        os.makedirs(round_dir, exist_ok=True)
+        charts = [(c, balanced_means[(r, c)]) for r, c in balanced_means if r == rnd]
+        cams, refs, use = [], [], []
+        for chart_n, balanced in charts:
+            usable = all_patches[(all_patches["round"] == rnd) &
+                                 (all_patches["chart"] == chart_n)]["usable"].to_numpy()
+            scaled, _ = wb.scale_to_reference(balanced, ref_XYZ, usable)
+            cams.append(scaled); refs.append(ref_XYZ); use.append(usable)
+        M = wb.fit_matrix(np.vstack(cams), np.vstack(refs), np.concatenate(use))
+        color_matrices[rnd] = M
+        row_sums = M.sum(axis=1)
+        print(f"DELIVERABLE {problem}a: {rnd} color matrix (camera RGB -> XYZ), fit to "
+              f"{int(np.concatenate(use).sum())} usable patches from {len(charts)} charts "
+              f"-> {round_dir}{problem}a_{rnd}_color_matrix.txt")
+        print(np.array2string(M, precision=4, suppress_small=True))
+        chroma_err = (row_sums / row_sums[1]) / white_target - 1     # brightness divided out
+        print(f"DELIVERABLE {problem}b: {rnd} row sums {np.round(row_sums, 4)} vs reference white "
+              f"(Y = 1) {np.round(white_target, 4)}. Brightness (Y row sum): "
+              f"{100 * (row_sums[1] - 1):+.1f} %. Neutral color, X and Z after dividing by the "
+              f"Y row sum: {100 * chroma_err[0]:+.1f} %, {100 * chroma_err[2]:+.1f} %")
+        with open(f"{round_dir}{problem}a_{rnd}_color_matrix.txt", "w") as f:
+            f.write(wb.matrix_latex(M, row_sums, white_target,
+                                    f"Problem 7, {rnd}: least squares color matrix"))
+
+        # Not a deliverable: how the matrix does per chart, and the comparison figure.
+        for chart_n, balanced in charts:
+            g = all_patches[(all_patches["round"] == rnd) & (all_patches["chart"] == chart_n)]
+            usable = g["usable"].to_numpy()
+            scaled, _ = wb.scale_to_reference(balanced, ref_XYZ, usable)
+            de, _ = wb.delta_e_vs_reference(scaled, ref_XYZ, usable, M=M)
+            print(f"\t{rnd} chart {chart_n}: CIEDE2000 with this matrix, mean "
+                  f"{de[usable].mean():.2f}, worst {de[usable].max():.2f}")
+            wb.comparison_figure(g[["R", "G", "B"]].to_numpy(), balanced, M, ref_XYZ,
+                                 ref_illuminant_xy, usable, f"{rnd} chart {chart_n}",
+                                 f"{round_dir}{problem}_{rnd}_chart{chart_n}_comparison.png")
+
+
 
 
 

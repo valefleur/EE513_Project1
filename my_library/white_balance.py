@@ -89,3 +89,85 @@ def delta_e_vs_reference(cam_balanced, ref_XYZ, usable, M=SRGB_TO_XYZ):
     lab_meas = lab_with_white(XYZ_meas, XYZ_meas[k] * scale)
     lab_ref = lab_with_white(ref_XYZ, ref_XYZ[k] * scale)
     return np.asarray(colour.delta_E(lab_meas, lab_ref, method="CIE 2000")), k
+
+
+# ----------------------------------------------------------------------------- Problem 7
+def scale_to_reference(cam_balanced, ref_XYZ, usable):
+    """Exposure only: scale camera RGB so the green of the reference-white patch k equals
+    that patch's reference Y. Then a matrix that preserves neutrals has a Y row summing
+    to about 1, and its X and Z rows sum to the reference white's X/Y and Z/Y."""
+    k = pick_white(usable)
+    return np.asarray(cam_balanced, float) * (ref_XYZ[k, 1] / cam_balanced[k, 1]), k
+
+
+def fit_matrix(cam, ref_XYZ, usable):
+    """Least squares 3x3 M with ref_XYZ ~= cam @ M.T, over the usable patches only.
+    Each column of lstsq's solution is one output (X, Y or Z), so transpose to get M."""
+    sol, *_ = np.linalg.lstsq(np.asarray(cam)[usable], np.asarray(ref_XYZ)[usable], rcond=None)
+    return sol.T
+
+
+def white_xyz_y1(ref_XYZ):
+    """Reference white patch (19) XYZ normalized to Y = 1: what M @ [1, 1, 1] should be."""
+    return ref_XYZ[18] / ref_XYZ[18, 1]
+
+
+def matrix_latex(M, row_sums, target, caption):
+    """M as an equation with its row sums and the neutral-preserving target beside it."""
+    rows = " \\\\\n".join(" & ".join(f"{v:.4f}" for v in r) for r in M)
+    sums = " \\\\\n".join(f"{v:.4f}" for v in row_sums)
+    targ = " \\\\\n".join(f"{v:.4f}" for v in target)
+    return ("% " + caption + "\n\\begin{equation*}\nM = \\begin{bmatrix}\n" + rows +
+            "\n\\end{bmatrix},\\quad\nM\\begin{bmatrix}1\\\\1\\\\1\\end{bmatrix} = "
+            "\\begin{bmatrix}\n" + sums + "\n\\end{bmatrix}\\quad\\text{vs. white }"
+            "\\begin{bmatrix}\n" + targ + "\n\\end{bmatrix}\n\\end{equation*}\n")
+
+
+# ----------------------------------------------------------------------------- comparison figure
+def _xyz_d50_to_srgb8(XYZ, illuminant_xy):
+    """Reference-style XYZ (D50) -> display sRGB, adapted to D65 (Bradford), 0..1."""
+    rgb = colour.XYZ_to_sRGB(np.asarray(XYZ, float), illuminant=illuminant_xy,
+                             chromatic_adaptation_transform="Bradford")
+    return np.clip(rgb, 0, 1)
+
+
+def _linear_to_display(rgb_linear):
+    return np.clip(colour.cctf_encoding(np.clip(rgb_linear, 0, 1), function="sRGB"), 0, 1)
+
+
+def comparison_figure(cam_raw, cam_balanced, M, ref_XYZ, illuminant_xy, usable, title, save_path):
+    """Three charts side by side: camera RGB, white balanced (= naive sRGB), fitted matrix.
+    Each patch: left half = pipeline, right half = published reference. Clipped patches: x.
+    Every panel is scaled so its reference-white patch matches the reference's level."""
+    import matplotlib.pyplot as plt
+    k = pick_white(usable)
+    ref_disp = _xyz_d50_to_srgb8(ref_XYZ, illuminant_xy)
+    raw_s, _ = scale_to_reference(cam_raw, ref_XYZ, usable)
+    bal_s, _ = scale_to_reference(cam_balanced, ref_XYZ, usable)
+    panels = [("Camera RGB, no white balance", _linear_to_display(raw_s)),
+              ("White balanced (= naive sRGB, Problems 5-6)", _linear_to_display(bal_s)),
+              ("Fitted 3x3 matrix (Problem 7)", _xyz_d50_to_srgb8(bal_s @ M.T, illuminant_xy))]
+    s, gap = 40, 8
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.3))
+    for ax, (name, disp) in zip(axes, panels):
+        img = np.ones((4 * (s + gap) + gap, 6 * (s + gap) + gap, 3)) * 0.12
+        for p in range(24):
+            r, c = divmod(p, 6)
+            y, x = gap + r * (s + gap), gap + c * (s + gap)
+            img[y:y + s, x:x + s // 2] = disp[p]
+            img[y:y + s, x + s // 2:x + s] = ref_disp[p]
+        ax.imshow(img)
+        for p in range(24):
+            r, c = divmod(p, 6)
+            y, x = gap + r * (s + gap), gap + c * (s + gap)
+            ax.text(x + 2, y + 9, str(p + 1), fontsize=6, color="white",
+                    bbox=dict(fc="black", alpha=0.5, lw=0, pad=0.5))
+            if not usable[p]:
+                ax.plot([x, x + s], [y, y + s], "w-", [x, x + s], [y + s, y], "w-", lw=0.8)
+        ax.set_title(name, fontsize=10)
+        ax.axis("off")
+    fig.suptitle(f"{title}   (each patch: left = pipeline, right = reference; "
+                 f"x = clipped; scaled to patch {k + 1})", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
