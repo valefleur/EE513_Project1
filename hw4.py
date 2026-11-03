@@ -55,7 +55,7 @@ if __name__ == "__main__":
     cam = 'iphone'
 
     SPEED_UP = False
-    TESTING = True
+    TESTING = False
 
     camera_path = 'images/iPhone16/'
     calib_path = 'all_calib_images/'
@@ -353,15 +353,17 @@ if __name__ == "__main__":
                               gR=gains[0], gG=gains[1], gB=gains[2], resid=resid,
                               neutrals=", ".join(map(str, used))))
 
+        round_dir = f"{output_path}{rnd}/"
+        os.makedirs(round_dir, exist_ok=True)
         print(f"DELIVERABLE {problem}b: patch means after balancing, {rnd} chart {chart_n} "
-              f"-> {output_path}{problem}b_{rnd}_chart{chart_n}_balanced_means.txt")
+              f"-> {round_dir}{problem}b_{rnd}_chart{chart_n}_balanced_means.txt")
         tex.generate_table([list(range(1, 25)), list(psu.COLORCHECKER_NAMES)] +
                            [[f"{v:.4f}" for v in balanced[:, j]] for j in range(3)] +
                            [["yes" if u else "no" for u in usable]],
                            labels=["Patch", "Name", "R", "G", "B", "Usable"],
                            caption=f"Patch means after white balance (gains from patch {k + 1}, "
                                    f"{psu.COLORCHECKER_NAMES[k]}), {rnd} chart {chart_n}",
-                           output_path=f"{output_path}{problem}b_{rnd}_chart{chart_n}_balanced_means.txt",
+                           output_path=f"{round_dir}{problem}b_{rnd}_chart{chart_n}_balanced_means.txt",
                            escape=True, VERBOSE=False)
 
     gains_df = pd.DataFrame(gain_rows)
@@ -377,6 +379,43 @@ if __name__ == "__main__":
                                "neutrals 19-23 after balancing.",
                        output_path=f"{output_path}{problem}a_white_balance_gains.txt",
                        escape=True, VERBOSE=False)
+
+
+    # Problem 6: error with no color matrix (balanced camera RGB treated as linear sRGB)
+    problem = "06"
+    print(f"\n**** Problem {problem} ****")
+    METRIC = "CIEDE2000"
+    de_rows, de_patches = [], []
+    for (rnd, chart_n), balanced in balanced_means.items():
+        usable = all_patches[(all_patches["round"] == rnd) &
+                             (all_patches["chart"] == chart_n)]["usable"].to_numpy()
+        # Pass in the white-balanced samples from problem 5, naively pretending that the
+        # camera's R, G and B channels match that of sRGB's R, G and B channels.
+        de, k_white = wb.delta_e_vs_reference(balanced, ref_XYZ, usable)   # sRGB primaries
+        worst = int(np.argmax(np.where(usable, de, -np.inf)))
+        de_rows.append(dict(round=rnd, chart=chart_n,
+                            white=f"{k_white + 1} {psu.COLORCHECKER_NAMES[k_white]}",
+                            n=int(usable.sum()), mean=float(de[usable].mean()),
+                            worst=float(de[worst]),
+                            worst_patch=f"{worst + 1} {psu.COLORCHECKER_NAMES[worst]}"))
+        de_patches.append(pd.DataFrame({"round": rnd, "chart": chart_n, "patch": range(1, 25),
+                                        "name": psu.COLORCHECKER_NAMES, "dE00_srgb": de,
+                                        "usable": usable}))
+    de_df = pd.DataFrame(de_rows)
+    pd.concat(de_patches).to_csv(f"{output_path}{problem}_dE_per_patch_srgb.csv", index=False)
+    print(f"DELIVERABLE {problem}a: mean and worst {METRIC} over usable patches, no color matrix "
+          f"(sRGB primaries) -> {output_path}{problem}a_dE_srgb_baseline.txt")
+    print(de_df.to_string(index=False, float_format="{:.2f}".format))
+    tex.generate_table([de_df["round"].tolist(), de_df["chart"].tolist(), de_df["white"].tolist(),
+                        de_df["n"].tolist()] +
+                       [[f"{v:.2f}" for v in de_df[c]] for c in ("mean", "worst")] +
+                       [de_df["worst_patch"].tolist()],
+                       labels=["Round", "Chart", "Reference white", "Patches",
+                               f"Mean $\\Delta E_{{00}}$", f"Worst $\\Delta E_{{00}}$", "Worst patch"],
+                       caption=f"Error before any color matrix: white-balanced camera RGB treated as "
+                               f"linear sRGB. Metric: {METRIC}, over usable (unclipped) patches.",
+                       output_path=f"{output_path}{problem}a_dE_srgb_baseline.txt",
+                       escape=False, VERBOSE=False)
 
 
 
