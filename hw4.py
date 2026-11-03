@@ -623,17 +623,127 @@ if __name__ == "__main__":
               f"{(worst_vals.std(ddof=1) if len(worst_vals) > 1 else 0):.2f}")
 
 
+    # Part 4 (Problems 11-13): carry one illuminant's matrix to other illuminants.
+    # Base = incandescent (smooth blackbody). LED has a similar color temperature but a
+    # different spectrum; cloudy1 has a different color temperature but a smooth spectrum.
+    # So each transfer changes one thing. Fluorescent (spiky) is an extra case in the figure.
+    PART4_BASE = "incandesent"      # incandescent; must match the key in `rounds`
+    PART4_SECOND = "led"            # Problem 11: spectral shape changes
+    PART4_THIRD = "cloudy1"         # Problem 12: color temperature changes
+    PART4_EXTRA = ["florescent"]    # fluorescent, figure only; must match the key in `rounds`
 
+    def de_charts(rnd, M):
+        """Per-chart dE00 (NaN where clipped) under round `rnd` with matrix M. White balance
+        is this round's own (Problem 5); each chart is scaled so its reference neutral
+        matches the published value before dE is computed."""
+        out = {}
+        for (r, c), balanced in balanced_means.items():
+            if r != rnd:
+                continue
+            usable = all_patches[(all_patches["round"] == r) & (all_patches["chart"] == c)]["usable"].to_numpy()
+            scaled, _ = wb.scale_to_reference(balanced, ref_XYZ, usable)
+            de, _ = wb.delta_e_vs_reference(scaled, ref_XYZ, usable, M=M)
+            out[c] = np.where(usable, de, np.nan)
+        return out
 
+    def summarize(rnd, M, matrix_label, role):
+        d = de_charts(rnd, M)
+        means = np.array([np.nanmean(v) for v in d.values()])
+        worsts = np.array([np.nanmax(v) for v in d.values()])
+        worst_patch = pd.Series([int(np.nanargmax(v)) for v in d.values()]).mode()[0]
+        sd = lambda v: v.std(ddof=1) if len(v) > 1 else 0.0
+        return dict(illuminant=rnd, matrix=matrix_label, role=role, charts=len(d),
+                    mean=means.mean(), mean_sd=sd(means), worst=worsts.mean(), worst_sd=sd(worsts),
+                    worst_patch=f"{worst_patch + 1} {psu.COLORCHECKER_NAMES[worst_patch]}"), d
 
-        # # Problem 3
-        # problem = "03"
-        # print(f"\n**** Problem {problem} ****")
+    def transfer_table(problem, target, part):
+        rows = [summarize(PART4_BASE, M_base, PART4_BASE, "fit here (Problem 7)")[0],
+                summarize(target, M_base, PART4_BASE, "transferred, not refit")[0],
+                summarize(target, color_matrices[target], target, "own matrix (for context)")[0]]
+        t = pd.DataFrame(rows)
+        path = f"{output_path}{problem}{part}_{PART4_BASE}_to_{target}_dE.txt"
+        print(f"DELIVERABLE {problem}{part}: mean and worst CIEDE2000 under {target} with the "
+              f"{PART4_BASE} matrix, beside {PART4_BASE} -> {path}")
+        print(t.to_string(index=False, float_format="{:.2f}".format))
+        tex.generate_table([t["illuminant"].tolist(), t["matrix"].tolist(), t["role"].tolist(),
+                            t["charts"].tolist(),
+                            [f"{m:.2f} $\\pm$ {s:.2f}" for m, s in zip(t["mean"], t["mean_sd"])],
+                            [f"{m:.2f} $\\pm$ {s:.2f}" for m, s in zip(t["worst"], t["worst_sd"])],
+                            t["worst_patch"].tolist()],
+                           labels=["Illuminant", "Matrix from", "Role", "Charts", "Mean $\\Delta E_{00}$",
+                                   "Worst $\\Delta E_{00}$", "Most common worst patch"],
+                           caption=f"Matrix fitted under {PART4_BASE} carried unchanged to {target} "
+                                   f"(white balance refit, neutral scaled to its published value). "
+                                   f"CIEDE2000, usable patches; value $\\pm$ sample std across charts.",
+                           output_path=path, escape=False, VERBOSE=False)
+        return t
 
+    missing = [r for r in [PART4_BASE, PART4_SECOND, PART4_THIRD] if r not in color_matrices]
+    if missing:
+        print(f"\nPart 4 skipped: no matrix/patch data for {missing} (set TESTING = False?)")
+    else:
+        M_base = color_matrices[PART4_BASE]
 
-        # # Problem 3
-        # problem = "03"
-        # print(f"\n**** Problem {problem} ****")
+        problem = "11"
+        print(f"\n**** Problem {problem} ****")
+        t11 = transfer_table(problem, PART4_SECOND, "a")
+
+        problem = "12"
+        print(f"\n**** Problem {problem} ****")
+        t12 = transfer_table(problem, PART4_THIRD, "a")
+        series = [(f"{PART4_BASE} (own matrix)", PART4_BASE)] + \
+                 [(f"{r} ({PART4_BASE} matrix)", r) for r in [PART4_SECOND, PART4_THIRD] + PART4_EXTRA
+                  if r in color_matrices]
+        per_patch = []
+        for label, rnd in series:
+            stack = np.vstack(list(de_charts(rnd, M_base).values()))
+            n_ok = np.sum(~np.isnan(stack), axis=0)
+            per_patch.append((label, np.where(n_ok > 0, np.nansum(stack, axis=0) / np.maximum(n_ok, 1), np.nan)))
+        path = f"{output_path}{problem}b_per_patch_dE_three_illuminants.png"
+        print(f"DELIVERABLE {problem}b: per-patch CIEDE2000 across illuminants, {PART4_BASE} matrix -> {path}")
+        wb.plot_transfer_per_patch(per_patch, psu.COLORCHECKER_NAMES,
+                                   f"Per-patch error with the matrix fitted under {PART4_BASE}", path)
+
+        # Not a deliverable: see the transfer. Same chart number in each round;
+        # PART4_VIEW_TARGETS can be any rounds (led, cloudy1, florescent, shade, ...).
+        PART4_VIEW_CHART = 1
+        PART4_VIEW_TARGETS = [PART4_SECOND, PART4_THIRD] + PART4_EXTRA
+
+        def chart_view_data(rnd, M):
+            g = all_patches[(all_patches["round"] == rnd) & (all_patches["chart"] == PART4_VIEW_CHART)]
+            usable = g["usable"].to_numpy()
+            scaled, _ = wb.scale_to_reference(balanced_means[(rnd, PART4_VIEW_CHART)], ref_XYZ, usable)
+            de, _ = wb.delta_e_vs_reference(scaled, ref_XYZ, usable, M=M)
+            return scaled, usable, de
+
+        for target in PART4_VIEW_TARGETS:
+            if (target, PART4_VIEW_CHART) not in balanced_means or \
+                    (PART4_BASE, PART4_VIEW_CHART) not in balanced_means:
+                print(f"\tno chart {PART4_VIEW_CHART} for {target} or {PART4_BASE}; view skipped")
+                continue
+            panels = []
+            for title, rnd, M in [(f"{PART4_BASE} chart, {PART4_BASE} matrix", PART4_BASE, M_base),
+                                  (f"{target} chart, {PART4_BASE} matrix (transferred)", target, M_base),
+                                  (f"{target} chart, {target} matrix (own)", target, color_matrices[target])]:
+                scaled, usable, de = chart_view_data(rnd, M)
+                panels.append((title, scaled, M, usable, de))
+            path = f"{output_path}{target}/{problem}_{PART4_BASE}_to_{target}_chart{PART4_VIEW_CHART}_view.png"
+            os.makedirs(f"{output_path}{target}/", exist_ok=True)
+            print(f"\tfigure (not a deliverable): matrix transfer to {target}, chart {PART4_VIEW_CHART} -> {path}")
+            wb.transfer_view_figure(panels, ref_XYZ, ref_illuminant_xy,
+                                    f"Chart {PART4_VIEW_CHART}: {PART4_BASE} matrix carried to {target}", path)
+
+        problem = "13"
+        print(f"\n**** Problem {problem} ****")
+        d2 = t11.iloc[1]["mean"] - t11.iloc[0]["mean"]
+        d3 = t12.iloc[1]["mean"] - t12.iloc[0]["mean"]
+        gains = gains_df.groupby("round")[["gR", "gB"]].mean()
+        print(f"For the analysis: mean CIEDE2000 rises by {d2:+.2f} for {PART4_BASE} -> {PART4_SECOND} "
+              f"(spectral shape) and by {d3:+.2f} for {PART4_BASE} -> {PART4_THIRD} (color temperature).")
+        print("White balance gains (R, B; mean over charts), a rough color-temperature indicator: " +
+              "; ".join(f"{r} {gains.loc[r, 'gR']:.2f}, {gains.loc[r, 'gB']:.2f}"
+                        for r in [PART4_BASE, PART4_SECOND, PART4_THIRD] + PART4_EXTRA if r in gains.index))
+        print(f"DELIVERABLE {problem}a: written analysis (in the report)")
 
 
     cols = ["round", "kind", "chart", "file", "iso", "exposure"]

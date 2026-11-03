@@ -80,7 +80,7 @@ def delta_e_vs_reference(cam_balanced, ref_XYZ, usable, M=SRGB_TO_XYZ):
     by the reference's own ratio Y_19 / Y_k, so L* keeps its usual 0..100 range; for
     k = 19 the scale is 1. Returns (dE for all 24 patches, k).
     """
-    print(f"Shape of cam_balanced: {cam_balanced.shape}, shape of color correcting matrix: {M.shape}.")
+    # print(f"Shape of cam_balanced: {cam_balanced.shape}, shape of color correcting matrix: {M.shape}.")
     k = pick_white(usable)
 
     # Multiply by M, the standard sRGB to XYZ matrix.
@@ -223,3 +223,64 @@ def column_comparison(matrices):
             row[f"length_{ch}"] = float(np.linalg.norm(b) / np.linalg.norm(a))
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+# ----------------------------------------------------------------------------- Part 4
+def plot_transfer_per_patch(series, names, title, save_path):
+    """series: list of (label, per-patch mean dE over charts, NaN = clipped everywhere).
+    Grouped bars, one group per patch, one bar per illuminant/matrix combination."""
+    import matplotlib.pyplot as plt
+    colors = ("#000000", "#E69F00", "#56B4E9", "#009E73", "#CC79A7", "#D55E00")
+    fig, ax = plt.subplots(figsize=(14, 4.8))
+    x = np.arange(24)
+    w = 0.8 / len(series)
+    for i, (label, de) in enumerate(series):
+        ax.bar(x - 0.4 + w * (i + 0.5), de, w, color=colors[i % len(colors)],
+               label=f"{label} (mean {np.nanmean(de):.2f})")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{k + 1} {n}" for k, n in enumerate(names)], rotation=60, ha="right", fontsize=8)
+    ax.set_ylabel("$\\Delta E_{00}$ (mean over charts)")
+    ax.set_title(title + " (metric: CIEDE2000; missing bar = clipped)", fontsize=10)
+    ax.grid(axis="y", alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def transfer_view_figure(panels, ref_XYZ, illuminant_xy, title, save_path):
+    """Charts side by side, each rendered through its own matrix.
+
+    panels: list of (panel title, scaled camera RGB 24x3, M, usable, dE 24).
+    Each patch: left half = camera RGB through M, right half = published reference,
+    with that patch's CIEDE2000 printed on it. Clipped patches are crossed out.
+    """
+    import matplotlib.pyplot as plt
+    ref_disp = _xyz_d50_to_srgb8(ref_XYZ, illuminant_xy)
+    s, gap = 46, 8
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.2 * len(panels), 4.4))
+    for ax, (name, cam, M, usable, de) in zip(np.atleast_1d(axes), panels):
+        disp = _xyz_d50_to_srgb8(np.asarray(cam) @ np.asarray(M).T, illuminant_xy)
+        img = np.ones((4 * (s + gap) + gap, 6 * (s + gap) + gap, 3)) * 0.12
+        for p in range(24):
+            r, c = divmod(p, 6)
+            y, x = gap + r * (s + gap), gap + c * (s + gap)
+            img[y:y + s, x:x + s // 2] = disp[p]
+            img[y:y + s, x + s // 2:x + s] = ref_disp[p]
+        ax.imshow(img)
+        for p in range(24):
+            r, c = divmod(p, 6)
+            y, x = gap + r * (s + gap), gap + c * (s + gap)
+            label = f"{p + 1}: {de[p]:.1f}" if usable[p] else f"{p + 1}: clip"
+            ax.text(x + 2, y + s - 4, label, fontsize=6, color="white",
+                    bbox=dict(fc="black", alpha=0.55, lw=0, pad=0.6))
+            if not usable[p]:
+                ax.plot([x, x + s], [y, y + s], "w-", [x, x + s], [y + s, y], "w-", lw=0.8)
+        ax.set_title(f"{name}\nmean $\\Delta E_{{00}}$ {np.mean(de[usable]):.2f}, "
+                     f"worst {np.max(de[usable]):.2f}", fontsize=9)
+        ax.axis("off")
+    fig.suptitle(f"{title}   (each patch: left = corrected camera, right = reference; "
+                 f"number = CIEDE2000)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
