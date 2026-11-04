@@ -4,6 +4,7 @@ import rawpy
 import tifffile
 import struct
 import numpy as np
+import pandas as pd
 
 # Written by Claude Sonnet 5.5
 
@@ -114,7 +115,7 @@ def lens_id(path):
     """The fingerprint of the camera that made this raw file.
     Originally written by Prof. James McNames.
     """
-    print(f"path: {path}")
+    # print(f"path: {path}")
     with tifffile.TiffFile(path) as t:
         p = t.pages[0]
         exif = p.tags["ExifTag"].value
@@ -145,8 +146,22 @@ def _to_float(value):
         return None
 
 
+def get_optical_center(path):
+    """
+    For now, return the geometric center of the image as (x, y) in subpixels (float).
+    TODO Find an image whose EXIF data includes any data related to the optical
+    center instead of the geometric center and add a try-catch block to attempt
+    to return that data first.
+    """
+    with rawpy.imread(str(path)) as raw:
+        shape = tuple(raw.raw_image_visible.shape)
+        center_x = shape[1] / 2.0
+        center_y = shape[0] / 2.0
+    return center_x, center_y
+
+
 def raw_metadata(path):
-    """Return a dict of exposure time, ISO, black level and camera for one raw file.
+    """Return a pandas series of exposure time, ISO, black level and camera for one raw file.
 
     Keys: file, camera, exposure_s, iso, black_levels (per channel, as stored
     in the file), white_level, bayer (color order of the 2x2 tile), shape.
@@ -185,9 +200,9 @@ def raw_metadata(path):
         except Exception:
             bayer = None
 
-    return dict(file=path.name, camera=camera or None, exposure_s=exposure,
+    return pd.Series(dict(file=path.name, camera=camera or None, exposure_s=exposure,
                 iso=int(iso) if iso is not None else None,
-                black_levels=black, white_level=white, bayer=bayer, shape=shape)
+                black_levels=black, white_level=white, bayer=bayer, shape=shape))
 
 
 def _format_exposure(seconds):
@@ -198,12 +213,7 @@ def _format_exposure(seconds):
     return f"{seconds:g} s"
 
 
-def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
-    """Print a table of metadata for one raw file or every raw file under a directory.
-
-    Ends with a summary of the distinct (camera, ISO) combinations found, so a
-    mixed-ISO folder is obvious. Returns the list of metadata dicts.
-    """
+def get_image_paths(target, suffixes=RAW_SUFFIXES):
     target = Path(target)
     if target.is_dir():
         paths = sorted(p for p in target.rglob("*")
@@ -214,16 +224,40 @@ def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
         print(f"No raw files found in {target}")
         return []
 
+    return paths
+
+
+def print_raw_metadata(target, df, suffixes=RAW_SUFFIXES):
+# def print_raw_metadata(target, suffixes=RAW_SUFFIXES):
+    """Print and return a pandas table of metadata for one raw file or every raw file under a directory.
+
+    Ends with a summary of the distinct (camera, ISO) combinations found, so a
+    mixed-ISO folder is obvious. Returns the list of metadata dicts.
+    """
     rows = []
-    print(f"{'file':28s} {'exposure':>10s} {'ISO':>5s}  {'black level (per channel)':26s} "
+    target = Path(target)
+    if target.is_dir():
+        paths = sorted(p for p in target.rglob("*")
+                       if p.is_file() and p.suffix.lower() in suffixes)
+    else:
+        paths = [target]
+    if not paths:
+        print(f"No raw files found in {target}")
+        return rows
+
+    print(f"{'file':20s} {'exposure':>10s} {'ISO':>5s}  {'black level (per channel)':26s} "
           f"{'white':>6s} {'bayer':>5s}  camera")
     for p in paths:
         try:
             m = raw_metadata(p)
+            # df.loc[len(df)] = m
         except Exception as exc:
             print(f"{p.name:28s} could not read: {exc}")
             continue
-        rows.append(m)
+        # unpack the pandas series m as a dictionary and append it to the rows list
+        rows.append(m.to_dict())
+        # add the pandas series m to the end of the pandas dataframe df
+        df.loc[len(df)] = m
         print(f"{m['file']:28s} {_format_exposure(m['exposure_s']):>10s} "
               f"{str(m['iso']) if m['iso'] is not None else '?':>5s}  "
               f"{str(m['black_levels']):26s} {m['white_level']:>6d} "
@@ -275,3 +309,5 @@ def channel_means(path):
     means = [float(image[colors == c].mean()) for c in range(4)]
     labels = [desc[c] if desc.index(desc[c]) == c else desc[c] + "2" for c in range(4)]
     return means, labels
+
+

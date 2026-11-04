@@ -7,6 +7,7 @@ import pillow_heif
 import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 from pathlib import Path
 
 try:
@@ -18,6 +19,10 @@ SAVE_PLOTS = True
 CAMERAS = {'sony': 'Sony_a7sii', 'iphone': 'iPhone_16ProMax'}
 PATTERN_SIZE = (9, 6)
 SQUARE_MM = 20.01          # As measured with a ruler
+
+# Colors from: https://www.media.io/color-palette/blue-green-red-color-palette.html
+COLORS = {'Red': '#D7263D', 'Grn1': '#00A676', 'Grn2': '#197738', 'Blue': '#003B73', 'Alt': '#F4A261'} # City Transit
+# COLORS = {'Red': '#E76F51', 'Grn1': '#2A9D8F', 'Grn2': '#197738', 'Blue': '#1D3557', 'Alt': '#F4A261'} # Vintage Atlas
 
 def _is_raw(path_to_image):
     MY_CAMERAS = ['.arw', '.dng'] # Sony a7s ii and iPhone 16 RAW formats
@@ -42,7 +47,7 @@ def bayer_mosaic(path_to_raw):
         - white_level.
     '''
     assert os.path.isfile(path_to_raw), "ERROR: Path to RAW image required."
-    image = rawpy.imread(path_to_raw)
+    image = rawpy.imread(str(path_to_raw))
     print(f"\traw_type: {image.raw_type}")
     print(f"\traw_image_visible:\n\t\tshape: {image.raw_image_visible.shape}\n\t\tdtype: {image.raw_image_visible.dtype}")
     print(f"\traw_pattern:\n{image.raw_pattern}")
@@ -121,6 +126,196 @@ def metadata(path_to_image, extras=False):
     print(f"\t\tBit Depth: {bit_depth}")
     print(f"\t\tNum Chnls: {num_channels}")
 
+
+def clip_report(path, sat=4095):
+    """Fraction of pixels at the ceiling (whole frame and per channel), plus a spike ratio and more."""
+    with rawpy.imread(str(path)) as raw:
+        img, colors = raw.raw_image_visible, raw.raw_colors_visible
+        desc = raw.color_desc.decode()
+    hit = img >= sat
+    counts = np.bincount(img.ravel(), minlength=sat + 1)
+    mx = int(img.max())
+    return dict(
+        frame=float(hit.mean()),
+        spike_ratio=float(counts[sat] / max(counts[sat - 20:sat].mean(), 1)),   # ~0 if nothing clips
+        max_dn=mx,
+        n_at_max=int((img == mx).sum()),
+        channels={f"{desc[c]}{c}": float(hit[colors == c].mean()) for c in range(4)})
+
+
+def channel_histograms(path):
+    """Raw-value histogram of each CFA site, keyed like clip_report ("R0", "G1", "B2", "G3").
+
+    Returns (histograms, white_level). Each histogram has white_level + 1 bins
+    (index = raw DN). Small to keep: about 4 x 4096 integers per file.
+    """
+    with rawpy.imread(str(path)) as raw:
+        img, colors = raw.raw_image_visible, raw.raw_colors_visible
+        desc = raw.color_desc.decode()
+        white = int(raw.white_level)
+        hists = {f"{desc[c]}{c}": np.bincount(img[colors == c].ravel(), minlength=white + 1)
+                 for c in range(4)}
+    return hists, white
+
+
+def top_spike(counts, white_level, window_frac=0.02, n_compare=8):
+    """Look for a saturation spike at the very top of one channel's histogram.
+
+    Problem 1 (HW4): a file can saturate below its declared white level, and raw files
+    are often coarsely quantized at high signal, which leaves many empty values and
+    scatters small spikes through the upper half. So:
+      - search only the top `window_frac` of the declared range;
+      - the candidate is the most populated raw value in that window;
+      - its count is compared with the median count of the `n_compare` nearest
+        OCCUPIED values below it. Comparing with occupied values only means the empty
+        codes of a coarsely quantized file do not make an ordinary bin look like a spike.
+    A ratio near 1 means no pile-up (nothing saturated); a large ratio means pixels
+    are stacking up at a ceiling. Also reports the fraction of the channel in the
+    window, because a soft ceiling spreads its pile-up over several values.
+    """
+    counts = np.asarray(counts)
+    lo = int(white_level * (1 - window_frac))
+    window = counts[lo:white_level + 1]
+    occupied = np.flatnonzero(counts)
+    result = dict(top_dn=int(occupied[-1]) if occupied.size else None,
+                  peak_dn=None, n_peak=0, spike_ratio=0.0,
+                  window_frac=float(window.sum() / max(counts.sum(), 1)))
+    if window.sum() == 0:
+        return result                                   # nothing near the ceiling at all
+    peak = lo + int(np.argmax(window))
+    below = occupied[occupied < peak][-n_compare:]
+    ref = np.median(counts[below]) if below.size else 1.0
+    result.update(peak_dn=peak, n_peak=int(counts[peak]),
+                  spike_ratio=float(counts[peak] / max(ref, 1.0)))
+    return result
+
+
+def histogram(img_path, output, question=None, SHOW=False, VERBOSE=False):
+    ### Numpy approach; could also use OpenCV
+    file_name = os.path.basename(img_path)
+    # print(f"\tHistogram analysis for {file_name}.")
+    # Unpack image data from metadata
+    with rawpy.imread(str(img_path)) as raw:
+        # Slice out pixels by color using the Bayer mosaic pattern
+        pattern = raw.raw_pattern
+        color_desc = raw.color_desc
+        if VERBOSE:
+            print(f"\t\tDescriptor: {color_desc}\nPattern:\n{pattern}")
+        '''
+        TODO automatically use the pattern and color_desc to decide which
+        color is which array.  Since I am categorizing a single camera
+        it's ok to hard code it for now.
+        raw_pattern: [[2 3] [1 0]], desc: RGBG
+        B  G1
+        G2 R
+        '''
+        # [0::2, 1::2] means starting with row 0 take every other row
+        # and starting with column 1 take every other column.
+        # Effectively take one of every 4, but the upper right pixel
+        # every square of 4.
+        blue_arr = raw.raw_image_visible[0::2, 0::2]
+        grn2_arr = raw.raw_image_visible[0::2, 1::2]
+        grn1_arr = raw.raw_image_visible[1::2, 0::2]
+        red_arr  = raw.raw_image_visible[1::2, 1::2]
+
+        colors = np.asarray([red_arr, grn2_arr, blue_arr, grn1_arr])
+        color_names = np.asarray(['Red', 'Grn2', 'Blue', 'Grn1'])
+
+        # compare np.max to the declared white level
+        exif_white_level = raw.white_level
+        max_intensity = 0
+        color_saturations = []
+
+        for color, name in zip(colors, color_names):
+            brightest = np.max(color)
+            color_saturations.append(brightest)
+            if max_intensity < brightest:
+                max_intensity = brightest
+            if VERBOSE:
+                # print(f"\t\t{name} channel max: {brightest} is {'>=' if brightest >= exif_white_level else '<'} white level [{exif_white_level}].")
+                print(f"\t\tWhite level[{exif_white_level}] is {'>=' if exif_white_level >= brightest else '<'} {name} channel max: {brightest}.")
+
+        # per channel, flatten the array and call np.bincount (if int values)
+        color_means = []
+        bins_by_color = []
+        for color, name in zip(colors, color_names):
+            brightest = np.max(color)
+            avg = np.mean(color)
+            color_means.append(avg)
+            binned_count = np.bincount(color.flatten(), minlength=raw.white_level+1)
+            bins_by_color.append(binned_count)
+            if VERBOSE:
+                print(f"\t\t{str(name).upper()}")
+                print(f"\t\t\tMean Intensity: {avg}")
+                # np.argmax to find the tallest spike
+                print(f"\t\t\tHighest occupied value: {np.max(np.nonzero(binned_count))}")
+                # np.nonzero to find the highest bin with non-zero count
+                print(f"\t\t\tHighest bin with non-zero count: {np.max(np.nonzero(binned_count))}")
+                print(f"\t\t\tMost common intensity: {np.max(np.argmax(binned_count))}")
+
+        # plot one histogram with all colors together
+        # create one plot with one histogram for each bins_by_color
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.set_xlabel('Intensity')
+        ax.set_ylabel('Count')
+        ax.set_title(f'Full Histogram of RAW Image Intensities for {os.path.splitext(file_name)[0]}')
+        for binned_count, name in zip(bins_by_color, color_names):
+            ax.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
+        ax.legend()
+
+        plt.tight_layout()
+        if SHOW:
+            plt.show()
+        if SAVE_PLOTS:
+            title=f'{question+'_' if question else ''}full_histogram_of_{os.path.splitext(file_name)[0]}'
+            fig.savefig(f"{output}{title}.png")
+        plt.close(fig)
+
+        # do another plot of the upper 1-5% of the intensities
+        some = 0.05
+        # need to find the bin with the highest count of all colors in the top some% of the intensities to find the saturation point
+
+        # # for each color channel, find the highest bin with non-zero count in the top some% of the intensities
+        # # then find the max of those values to find the saturation point for the plot
+        # saturation_points = []
+        # for binned_count, name in zip(bins_by_color, color_names):
+        #     occupied = np.flatnonzero(binned_count)
+        #     if occupied.size == 0:
+        #         continue
+        #     top = int(occupied[-1])               # highest occupied bin for this channel
+        #     n_top = int(binned_count[top])        # pixels sitting exactly there
+        #     frac = n_top / binned_count.sum()     # fraction of this channel's pixels
+        #     print(f"\t\t{name}: top value {top}, {n_top} px there ({frac*100:.4f}% of channel)")
+        #     saturation_points.append((top, n_top, frac))
+        # # the singular saturation point is the max of the top values across all channels
+        # saturation_point = max([sp[0] for sp in saturation_points])
+        # print(f"\t\tOverall saturation point: {saturation_point}")
+
+        fig_top, ax_top = plt.subplots(figsize=(10, 6))
+        ax_top.set_xlabel('Intensity')
+        ax_top.set_ylabel('Count')
+        ax_top.set_title(f'Top {some*100}% Histogram of RAW Image Intensities for {os.path.splitext(file_name)[0]}')
+        # set x-axis to show only top some% of the intensities
+        top_some_percent = max_intensity - int(max_intensity * some)
+        ax_top.set_xlim((top_some_percent, int(max_intensity * 1.01)))
+        # set y-axis upper limit to the max of what is in the upper some% of the intensities
+        ax_top.set_ylim((0, max([np.max(binned_count[top_some_percent:]) for binned_count in bins_by_color]) * 1.1))
+
+        for binned_count, name in zip(bins_by_color, color_names):
+            ax_top.plot(binned_count, label=name, color=COLORS.get(name), alpha=0.7)
+        ax_top.legend()
+
+        plt.tight_layout()
+        if SHOW:
+            plt.show()
+        if SAVE_PLOTS:
+            title=f'{question+'_' if question else ''}top_{int(some*100)}_percent_histogram_of_{os.path.splitext(file_name)[0]}'
+            fig_top.savefig(f"{output}{title}.png")
+        plt.close(fig_top)
+
+    # return saturation_point
+
+
 def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=False):
     assert (camera is not None) and (camera in CAMERAS.keys()), "ERROR: Must have camera type to store output!"
     print(f"camera is [{camera}]")
@@ -163,6 +358,7 @@ def zoomed_way_in(raw_cv_img, jpg_cv_img, name, y1=0, x1=0, camera=None, SHOW=Fa
         title=f'{img_name}_zoomed_to_{SQ_SIZE}px_square'
         # TODO how to handle which hw directory to automatically put output in?
         fig.savefig(f"output/hw1/07_zoomed/{CAMERAS.get(camera)}/{title}.png")
+    plt.close(fig)
 
 def _open_image(path):
     '''
@@ -201,9 +397,12 @@ def board_object_points():
     return objp
 
 def _list_raw_files(path_to_raws):
-    raw_file_paths = sorted(os.fspath(i) for i in Path(path_to_raws).iterdir() if _is_raw(i))
-    print(f"There are {len(raw_file_paths)} RAW files.")
-    return raw_file_paths
+    """
+    Given a path to a directory, return a sorted list of all the RAW files in that directory.
+    """
+    raw_files = sorted(os.fspath(i) for i in Path(path_to_raws).iterdir() if _is_raw(i))
+    # print(f"There are {len(raw_files)} RAW files.")
+    return raw_files
 
 
 def contact_sheet(image_paths, camera=None, output=None, question=None, labels=None, SHOW=False):
@@ -212,7 +411,7 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
     HEIGHT = 100
     WIDTH = 100
     thumbs = []
-    print(f'image_paths[0]: {image_paths[0]}')
+    # print(f'image_paths[0]: {image_paths[0]}')
     for i in image_paths:
         # print(f'\tOpening {i}')
         img, name = _open_image(i)
@@ -262,6 +461,7 @@ def contact_sheet(image_paths, camera=None, output=None, question=None, labels=N
             # TODO update HW1 code and output file structure to use more generic version above
             path = f"output/hw1/10_contact_sheet/{CAMERAS.get(camera)}/{title}.png"
         fig.savefig(path)
+    plt.close(fig)
 
 
 def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, per_view, shape, camera=None, SHOW=True):
@@ -279,7 +479,7 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
     a1.quiver(pos[:, 0], pos[:, 1], res[:, 0], res[:, 1],
             np.linalg.norm(res, axis=1), cmap="viridis",
             angles="xy", scale_units="xy", scale=0.002, width=0.003)
-    a1.add_patch(plt.Rectangle((0, 0), *shape, fill=False, ec="#213921", lw=1.2))
+    a1.add_patch(Rectangle((0, 0), *shape, fill=False, ec="#213921", lw=1.2))
     a1.set_xlim(-200, shape[0] + 200); a1.set_ylim(shape[1] + 200, -200)
     a1.set_aspect("equal"); a1.grid(alpha=0)
     a1.set_title("residuals by position, drawn 500x", fontsize=11)
@@ -298,6 +498,8 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
     if SAVE_PLOTS:
         title=f'Residuals'
         fig.savefig(f"output/hw1/{CAMERAS.get(camera)}_{title}.png")
+    plt.close(fig)
+
 
 
 def edge_deviation(pts, pattern=PATTERN_SIZE, side='first_col'):
@@ -380,6 +582,7 @@ def undistort(img, K, distortion, corners=None, camera=None, SHOW=True, DEBUG=Tr
         plt.show()
     if SAVE_PLOTS:
         fig.savefig(f"output/hw2/03_{camera}_{title}.png")
+    plt.close(fig)
 
     # Problem 3
     problem_num = "03"
@@ -509,3 +712,4 @@ def generate_side_by_side(image_0, image_1, title=None, SHOW=False):
     if SAVE_PLOTS:
         title_alt = f"{image_0_name}+{image_1_name}"
         fig.savefig(f"output/hw1/06_RAW_vs_Processed/{title if title else title_alt}.png")
+    plt.close(fig)

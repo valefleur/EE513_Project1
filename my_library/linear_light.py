@@ -1,4 +1,5 @@
 import numpy as np
+import cv2 as cv
 
 # Transfer functions from Prof. James McNames' psu_imaging.py (EE 513 Introduction to Image Processing).
 import psu_imaging as psu
@@ -17,7 +18,6 @@ def green_plane_from_raw(raw, which_grn=0):
     print(f"Black level for this channel: {black}")
     plane = raw.raw_image_visible[r::2, c::2].astype(float)
     return np.clip((plane - black) / (raw.white_level - black), 0, 1)
-
 
 
 def green_plane(path, which_grn=0):
@@ -85,3 +85,54 @@ def plot_reduction(res, plot_path=None, title=""):
     if plot_path:
         fig.savefig(plot_path, dpi=150)
     return fig
+
+
+def raw_to_linear_light(raw_img, black_level, saturation_level, clip=True):
+    """Convert a raw image to linear light, 0.0 at black and 1.0 at saturation.
+
+    Subtracts the black level, divides by the span from black to
+    saturation, and returns the linearized image as a float array.
+
+    clip=True  limits the result to [0, 1]: right for display and for anything that
+               needs a valid pixel value.
+    clip=False keeps values below 0 (read noise on pixels near black). Use it for
+               MEASUREMENTS that average many pixels: clipping the negative half of
+               the noise to 0 biases a dark mean upward, like half-wave rectifying
+               zero-mean noise adds a DC offset.
+    """
+    linear = (raw_img.astype(float) - black_level) / (saturation_level - black_level)
+    return np.clip(linear, 0, 1) if clip else linear
+
+
+def quarter_rgb(linear, pattern, color_desc):
+    """
+    2x2 mosaic -> half-width, half-height RGB. No interpolation.
+    Return a quarter-resolution RGB image from a 2x2 mosaic.
+    """
+    desc = color_desc.decode() if isinstance(color_desc, bytes) else color_desc
+    h, w = (linear.shape[0] // 2) * 2, (linear.shape[1] // 2) * 2
+    linear = linear[:h, :w]
+    out = np.zeros((h // 2, w // 2, 3))
+    greens = []
+    for r in range(2):
+        for c in range(2):
+            plane = linear[r::2, c::2]
+            ch = desc[pattern[r, c]]
+            if ch == "R": out[..., 0] = plane
+            elif ch == "B": out[..., 2] = plane
+            else: greens.append(plane)
+    out[..., 1] = np.mean(greens, axis=0)
+    return out
+
+
+def load_linear_quarter_rgb(path, saturation_dn, clip=True):
+    """Raw file -> black-subtracted, saturation-normalized, quarter-res RGB. No interpolation.
+    See raw_to_linear_light() for when to pass clip=False."""
+    import rawpy
+    with rawpy.imread(str(path)) as raw:
+        blacks = set(raw.black_level_per_channel)
+        assert len(blacks) == 1, f"per-channel black levels differ: {blacks}"
+        lin = raw_to_linear_light(raw.raw_image_visible, blacks.pop(), saturation_dn, clip=clip)
+        return quarter_rgb(lin, raw.raw_pattern, raw.color_desc)
+
+

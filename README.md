@@ -2,11 +2,11 @@
 
 In this project, we are characterizing an image processing system. This means we are determining the intrinsic properties of a specific camera and lens combination. For simplicity, I have locked down photography settings where possible. I expect to need to focus based on physically moving closer/further from the subject matter. Additionally, I expect photos to be under or over exposed in an effort to keep the apeture constant. I intend to maintain the same shutter speed and ISO through a shooting session, but will note if shutter speed and/or ISO need to change to adequitely capture required data for the math. All of this may change as new assignments ask to look at different aspects of the image processing system.
 
-My late father was always into optics. His love for it started with astronomy and telescopes in his college years and moved onto photography in his retirement. He while he played with a variety of photographic styles, he was particularly into astro- and sunset photography and unique lighting affects therein. My brothers and I each inherited several of his cameras and lenses, but I haven't had much of a chance to learn or practice photography. Most of what I have learned has specifically been for camera phones as I generally have that camera on me all the time. However there are a handful of photographic approaches I would like to try that physically cannot be done on a camera with a lense less than 10 mm. This class and project have created a wonderful excuse for me to pick up a camera or two to build my own optical and digital image processing intuition.
+My late father was always into optics. His love for it started with astronomy and telescopes in his college years and moved onto photography in his retirement. He while he played with a variety of photographic styles, he was particularly into astro- and sunset photography and unique lighting affects therein. My brothers and I each inherited several of his cameras and lenses, but I haven't had much of a chance to learn or practice photography. Most of what I have learned has specifically been for camera phones as I generally have that camera on me all the time. However there are a handful of photographic approaches I would like to try that physically cannot be done on a camera with a lens less than 10 mm. This class and project have created a wonderful excuse for me to pick up a camera or two to build my own optical and digital image processing intuition.
 
 ## The Camera to Model
 
-I inherited the following two cameras from my father, though the iPhone is generally in my pocket. I have used a variety of cameras over the years and often prefer travel and macro photography with the camera most easily at hand. I enjoy astrophotography when I can leave the metro area and the weather agrees with me. Most of my signal processing experience has been more time-oriented so this class will help me improve my understanding of spacial and multi-channel signal processing.
+I inherited the following two cameras from my father, and the iPhone is generally in my pocket: a Sony α7S II with Rokinon 24 mm lens and an iPhone 16 Pro Max. I have used a variety of cameras over the years and often prefer travel and macro photography with the camera most easily at hand. I enjoy astrophotography when I can leave the metro area and the weather agrees with me. Most of my signal processing experience has been more time-oriented so this class will help me improve my understanding of spacial and multi-channel signal processing.
 
 ## Camera change
 
@@ -24,6 +24,8 @@ I use the [iPhone 16 Pro Max](https://support.apple.com/en-us/121032) with the 1
 From Apple, the 1× lens is called the [48MP Fusion lens](https://support.apple.com/en-us/121032):
 
 > 48MP Fusion: 24 mm, ƒ/1.78 aperture, second-generation sensor-shift optical image stabilization, 100% Focus Pixels, support for super-high-resolution photos (24MP and 48MP). Also enables 12MP 2× Telephoto: 48 mm, ƒ/1.78 aperture, second-generation sensor-shift optical image stabilization, 100% Focus Pixels.
+
+Additional details from [GSM Arena](https://www.gsmarena.com/apple_iphone_16_pro_max-review-2750p5.php) and [Phone Arena](https://www.phonearena.com/news/iphone-16-camera_id159634).
 
 The photos come out at 12 MP, 24 mm, ƒ/1.78.
 
