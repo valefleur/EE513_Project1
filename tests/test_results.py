@@ -81,3 +81,12 @@ def test_update_refuses_to_write_invalid_file(tmp_path):
     with pytest.raises(ValueError):
         res.update({"read_noise_e": [7.0, -1.0]}, path=out)
     assert not out.exists()
+
+
+def test_progress_counts_open_pairs_as_incomplete():
+    results, template = res.load()
+    all_null = {k: (v if k == "_README" else None) for k, v in template.items()}
+    assert res.progress(all_null) == (0, len(template) - 1, 0.0)
+    one = dict(all_null, read_noise_e=[7.0, 0.3], black_level_dn=[528.0, None])
+    done, total, pct = res.progress(one)
+    assert done == 1 and pct == pytest.approx(100 / total)

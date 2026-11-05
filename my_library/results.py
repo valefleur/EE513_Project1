@@ -81,6 +81,23 @@ def todo(results):
     return open_keys
 
 
+def progress(results):
+    """(complete, total, percent): entries with a value and, for pairs, an uncertainty."""
+    total = sum(1 for k in results if k != "_README")
+    done = total - len(todo(results))
+    return done, total, 100.0 * done / total if total else 0.0
+
+
+def print_todo(results):
+    """Print the open entries with an overall percent-complete line."""
+    remaining = todo(results)
+    done, total, pct = progress(results)
+    print(f"results.json: {done} of {total} entries complete ({pct:.0f}%), "
+          f"{len(remaining)} still open:")
+    for line in remaining:
+        print(f"  {line}")
+
+
 def update(entries, path=RESULTS, template=TEMPLATE):
     """Merge entries into results.json, validate, and write it in template key order."""
     results, t = load(path, template)
@@ -100,7 +117,5 @@ if __name__ == "__main__":
     results, t = load()
     errors = validate(results, t)
     print("results.json is valid" if not errors else "PROBLEMS:\n  " + "\n  ".join(errors))
-    remaining = todo(results)
-    print(f"\n{len(remaining)} entries still open:")
-    for line in remaining:
-        print(f"  {line}")
+    print()
+    print_todo(results)
