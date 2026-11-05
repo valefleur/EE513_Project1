@@ -68,3 +68,11 @@ def test_read_tiff_tags_unchanged_for_noise_profile(tmp_path):
     assert meta.noise_profile(path) == [(8.858e-5, 9.874e-7)]
     vals, where = meta.read_tiff_tags(path)[meta.TAG_NOISE_PROFILE]
     assert where == "IFD0"
+
+
+def test_series_identity_reports_but_accepts_software_change(tmp_path, capsys):
+    a = write_dng(tmp_path / "a.dng", software="App 1.0")
+    b = write_dng(tmp_path / "b.dng", software="App 1.1")
+    ident, n = meta.series_identity([a, b])
+    assert n == 2
+    assert "Software tag" in capsys.readouterr().out

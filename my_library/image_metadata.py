@@ -265,21 +265,35 @@ def camera_identity(path):
     )
 
 
-def series_identity(paths):
-    """camera_identity() for every file in a series; raise if any of them differ.
+# Fields of camera_identity() that may differ within a series without meaning a
+# different camera: the file name, and the Software tag (an app or OS update between
+# capture sessions changes it). Differences in these are reported, not fatal.
+IDENTITY_INFO_ONLY = ("file", "software")
 
-    Everything except the file name must match across the series. Returns
-    (identity of the first file, number of files checked).
+
+def series_identity(paths):
+    """camera_identity() for every file in a series; stop if the camera differs.
+
+    Every camera-describing field (lens, focal length, CFA, image sizes, raw IFD
+    layout) must match across the series. Fields in IDENTITY_INFO_ONLY may differ;
+    those differences are printed. Capture settings such as ISO and exposure are not
+    part of the identity, so a series that varies them on purpose (flat fields across
+    exposures, for example) passes. Returns (identity of the first file, number of
+    files checked).
     """
     paths = [Path(p) for p in paths]
     if not paths:
         raise ValueError("series_identity: no files given")
     ids = [camera_identity(p) for p in paths]
-    first = {k: v for k, v in ids[0].items() if k != "file"}
+    first = ids[0]
     for p, ident in zip(paths[1:], ids[1:]):
-        diff = {k: (first[k], v) for k, v in ident.items() if k != "file" and v != first[k]}
-        if diff:
-            raise SystemExit(f"{p.name} differs from {paths[0].name}: {diff}")
+        diff = {k: (first[k], v) for k, v in ident.items() if v != first[k]}
+        fatal = {k: d for k, d in diff.items() if k not in IDENTITY_INFO_ONLY}
+        if fatal:
+            raise SystemExit(f"{p.name} differs from {paths[0].name}: {fatal}")
+        if "software" in diff:
+            print(f"  note: {p.name} Software tag {diff['software'][1]!r} differs from "
+                  f"{paths[0].name} {diff['software'][0]!r} (not a camera change)")
     return ids[0], len(ids)
 
 
