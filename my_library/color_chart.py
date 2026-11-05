@@ -46,9 +46,11 @@ _REF_LINEAR = psu.srgb_to_linear(np.asarray(psu.COLORCHECKER_SRGB, float))
 
 
 # ----------------------------------------------------------------------------- loading
-def load_chart_quarter_rgb(path, saturation_dn):
+def load_chart_quarter_rgb(path, saturation_dn, black_level=None):
     """Raw file -> (quarter-res linear RGB, quarter-res clip mask). Values are NOT
     clipped: slightly negative pixels near black are kept for unbiased averages.
+
+    black_level: DN to subtract. None (default) uses the file's declared black level.
 
     Linear RGB comes from ll.raw_to_linear_light + ll.quarter_rgb (Problem 2).
     The clip mask is True where ANY of the four CFA sites of a 2x2 tile reached
@@ -57,10 +59,12 @@ def load_chart_quarter_rgb(path, saturation_dn):
     """
     with rawpy.imread(str(path)) as raw:
         mosaic = raw.raw_image_visible
-        blacks = set(raw.black_level_per_channel)
-        assert len(blacks) == 1, f"per-channel black levels differ: {blacks}"
+        if black_level is None:
+            blacks = set(raw.black_level_per_channel)
+            assert len(blacks) == 1, f"per-channel black levels differ: {blacks}"
+            black_level = blacks.pop()
         # clip=False: keep the noise below black so dark patch means are unbiased.
-        lin = ll.raw_to_linear_light(mosaic, blacks.pop(), saturation_dn, clip=False)
+        lin = ll.raw_to_linear_light(mosaic, black_level, saturation_dn, clip=False)
         rgb = ll.quarter_rgb(lin, raw.raw_pattern, raw.color_desc)
         h, w = rgb.shape[:2]
         hit = mosaic >= saturation_dn
@@ -281,9 +285,10 @@ def sanity_checks(means, stds, counts, nclip, ceiling=NEAR_CEILING):
 
 
 # ----------------------------------------------------------------------------- one chart
-def measure_chart(path, saturation_dn, clicks=None):
-    """Everything for one capture. Returns a dict, or None if the chart was not found."""
-    rgb, clipped = load_chart_quarter_rgb(path, saturation_dn)
+def measure_chart(path, saturation_dn, clicks=None, black_level=None):
+    """Everything for one capture. Returns a dict, or None if the chart was not found.
+    black_level: see load_chart_quarter_rgb (None = the file's declared value)."""
+    rgb, clipped = load_chart_quarter_rgb(path, saturation_dn, black_level)
     if clicks is not None:
         H, how = homography_from_clicks(clicks), "manual clicks"
     else:
