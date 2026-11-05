@@ -78,7 +78,7 @@ def test_results_entries_keys_and_shape():
     assert e["delta_e_mean_after_ccm"] == [2.0, round(np.std([1.0, 3.0], ddof=1), 2)]
 
 
-def test_chart_catalog_drops_white_sheets_and_numbers_charts(tmp_path):
+def test_chart_catalog_drops_white_sheets_and_numbers_charts(tmp_path, capsys):
     from tests.synthetic_dng import write_dng
     for rnd in ("a", "b"):
         (tmp_path / rnd).mkdir()
@@ -88,3 +88,4 @@ def test_chart_catalog_drops_white_sheets_and_numbers_charts(tmp_path):
     catalog, ident, n = cm.chart_catalog({"a": tmp_path / "a", "b": tmp_path / "b"}, 4095)
     assert n == 4 and not catalog["file"].str.contains("_white").any()
     assert catalog.groupby("round")["chart"].apply(list).to_dict() == {"a": [1, 2], "b": [1, 2]}
+    assert "all images from the same camera" in capsys.readouterr().out   # lens_id assertion

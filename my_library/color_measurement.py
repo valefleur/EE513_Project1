@@ -48,7 +48,10 @@ def chart_catalog(rounds, saturation_dn, black_level=None):
     catalog = catalog[~catalog["file"].str.contains("_white")].reset_index(drop=True)
     catalog["chart"] = catalog.groupby("round").cumcount() + 1
     datalog.check_constant_within(catalog, "round", ["iso", "exposure_s", "black_levels"])
-    ident, n = meta.series_identity(catalog["path"].tolist())
+    paths = catalog["path"].tolist()
+    print(f"lens_id assertion (Prof. McNames, Project 1 page) over {len(paths)} chart files:")
+    meta.assert_one_camera(paths)
+    ident, n = meta.series_identity(paths)
     if black_level is not None:
         declared = sorted({b for blacks in catalog["black_levels"] for b in blacks})
         if declared != [black_level]:

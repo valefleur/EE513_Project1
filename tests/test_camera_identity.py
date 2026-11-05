@@ -36,18 +36,43 @@ def test_identity_rejects_linear_raw(tmp_path):
         meta.camera_identity(write_dng(tmp_path / "pro.dng", photometric=34892))
 
 
+def test_lens_model_and_focal_lengths_read_from_exif(tmp_path):
+    from tests.synthetic_dng import DEFAULT_LENS
+    path = write_dng(tmp_path / "a.dng")
+    ident = meta.camera_identity(path)
+    assert (ident["lens_model"], ident["focal_length_mm"], ident["focal_length_35mm"]) == \
+        (DEFAULT_LENS, 6.765, 24)
+    assert meta.lens_id(path)[:3] == (DEFAULT_LENS, 6.765, 24)   # same source as lens_id
+
+
+def test_lens_id_size_is_ifd0_not_raw(tmp_path):
+    # lens_id() reads ImageWidth/Length from IFD0, which in this layout is the preview.
+    path = write_dng(tmp_path / "a.dng", size=(64, 48))
+    assert meta.lens_id(path)[3] == (16, 12)
+    assert meta.camera_identity(path)["size_raw_ifd"] == (64, 48)
+
+
+def test_assert_one_camera_prints_and_rejects_mixed(tmp_path, capsys):
+    a = write_dng(tmp_path / "a.dng")
+    b = write_dng(tmp_path / "b.dng", lens_model="Test Phone back camera 2.220mm f/2.2")
+    meta.assert_one_camera([a, a])
+    assert "all images from the same camera" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        meta.assert_one_camera([a, b])
+
+
 def test_missing_lens_model_is_none_and_blocks_results_entries(tmp_path):
-    ident = meta.camera_identity(write_dng(tmp_path / "a.dng"))
+    ident = meta.camera_identity(write_dng(tmp_path / "a.dng", lens_model=None))
     assert ident["lens_model"] is None
     with pytest.raises(ValueError, match="LensModel"):
         meta.identity_results_entries(ident)
 
 
 def test_results_entries_size_source(tmp_path):
+    from tests.synthetic_dng import DEFAULT_LENS
     ident = meta.camera_identity(write_dng(tmp_path / "a.dng", crop=(56, 40)))
-    ident["lens_model"] = "Test lens 1mm f/2"   # stand-in for the Exif value
     e = meta.identity_results_entries(ident, size_from="default_crop")
-    assert e == {"camera": "Test lens 1mm f/2", "cfa_pattern": "BGGR",
+    assert e == {"camera": DEFAULT_LENS, "cfa_pattern": "BGGR",
                  "raw_width_px": 56, "raw_height_px": 40}
     with pytest.raises(ValueError):
         meta.identity_results_entries(ident, size_from="exif_guess")
