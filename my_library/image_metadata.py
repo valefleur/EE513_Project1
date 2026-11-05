@@ -17,13 +17,14 @@ _TYPES = {1: ("B", 1), 2: ("c", 1), 3: ("H", 2), 4: ("I", 4), 5: ("II", 8),
           9: ("i", 4), 10: ("ii", 8), 11: ("f", 4), 12: ("d", 8)}
 
 
-def read_tiff_tags(path, wanted=(TAG_NOISE_PROFILE, TAG_NOISE_REDUCTION)):
-    """Find DNG/TIFF tags by number, searching every IFD, including SubIFDs and Exif.
+def _scan_tiff_tags(path, wanted):
+    """Walk every IFD (main chain, SubIFDs, Exif) and record the wanted tags.
 
-    Returns {tag: (values, where)}. Needed because exifread and rawpy do not expose
-    NoiseProfile. Rationals come back as floats.
+    Returns a list of (where, ifd_index, tag, values) in the order the tags are met,
+    which is the walk order used by read_tiff_tags(). ifd_index numbers the IFDs in
+    the order they are visited, so tags from the same IFD can be grouped.
     """
-    found = {}
+    hits = []
     with open(path, "rb") as f:
         data = f.read()
     end = {b"II": "<", b"MM": ">"}.get(data[:2])
@@ -41,19 +42,24 @@ def read_tiff_tags(path, wanted=(TAG_NOISE_PROFILE, TAG_NOISE_REDUCTION)):
         out = struct.unpack(end + fmt[0] * (count * len(fmt)), raw)
         if typ in (5, 10):
             out = tuple(a / b if b else float("nan") for a, b in zip(out[0::2], out[1::2]))
+        if typ == 2:      # ASCII: bytes -> str, NUL-terminated
+            out = b"".join(out).split(b"\0")[0].decode("ascii", "replace")
         return out
 
     seen = set()
+    counter = [0]
 
     def walk(ifd_off, where):
         while ifd_off and ifd_off not in seen and ifd_off + 2 <= len(data):
             seen.add(ifd_off)
+            index = counter[0]
+            counter[0] += 1
             n = struct.unpack(end + "H", data[ifd_off:ifd_off + 2])[0]
             for i in range(n):
                 e = ifd_off + 2 + 12 * i
                 tag, typ, count = struct.unpack(end + "HHI", data[e:e + 8])
                 if tag in wanted:
-                    found.setdefault(tag, (values(typ, count, e + 8), where))
+                    hits.append((where, index, tag, values(typ, count, e + 8)))
                 if tag in (330, 34665) and typ in (4, 13):   # SubIFDs, Exif IFD
                     for sub in values(4, count, e + 8):
                         walk(sub, f"{where}>{'SubIFD' if tag == 330 else 'Exif'}")
@@ -61,7 +67,32 @@ def read_tiff_tags(path, wanted=(TAG_NOISE_PROFILE, TAG_NOISE_REDUCTION)):
             where = "IFD+"
 
     walk(struct.unpack(end + "I", data[4:8])[0], "IFD0")
+    return hits
+
+
+def read_tiff_tags(path, wanted=(TAG_NOISE_PROFILE, TAG_NOISE_REDUCTION)):
+    """Find DNG/TIFF tags by number, searching every IFD, including SubIFDs and Exif.
+
+    Returns {tag: (values, where)} for the first occurrence of each tag. Needed because
+    exifread and rawpy do not expose NoiseProfile. Rationals come back as floats.
+    """
+    found = {}
+    for where, _, tag, vals in _scan_tiff_tags(path, wanted):
+        found.setdefault(tag, (vals, where))
     return found
+
+
+def read_tiff_ifds(path, wanted):
+    """Like read_tiff_tags(), but keeps each IFD separate.
+
+    Returns a list of {"where": ..., tag: values, ...}, one per IFD that holds at least
+    one wanted tag, in visit order. Use this when the same tag (ImageWidth, say)
+    appears in several IFDs and it matters which one it came from.
+    """
+    ifds = {}
+    for where, index, tag, vals in _scan_tiff_tags(path, wanted):
+        ifds.setdefault(index, {"where": where})[tag] = vals
+    return [ifds[k] for k in sorted(ifds)]
 
 
 def noise_profile(path):
@@ -134,6 +165,152 @@ def assert_one_camera(paths):
                          "\n  ".join(map(str, ids)))
     else:
         print(f"all images from the same camera: {ids.pop()}")
+
+
+# Tags used to describe the raw image itself (TIFF 6 / DNG specification numbers).
+TAG_NEW_SUBFILE_TYPE = 254          # 0 = full-resolution image, 1 = reduced-resolution preview
+TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH = 256, 257
+TAG_PHOTOMETRIC = 262               # 32803 = CFA (Bayer mosaic), 34892 = LinearRaw (demosaiced)
+TAG_MAKE, TAG_MODEL, TAG_SOFTWARE = 271, 272, 305
+TAG_CFA_REPEAT_DIM, TAG_CFA_PATTERN = 33421, 33422
+TAG_CFA_PLANE_COLOR = 50710
+TAG_DEFAULT_CROP_ORIGIN, TAG_DEFAULT_CROP_SIZE = 50719, 50720
+TAG_ACTIVE_AREA = 50829
+PHOTOMETRIC_CFA, PHOTOMETRIC_LINEAR_RAW = 32803, 34892
+_RAW_TAGS = (TAG_NEW_SUBFILE_TYPE, TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_PHOTOMETRIC,
+             TAG_MAKE, TAG_MODEL, TAG_SOFTWARE, TAG_CFA_REPEAT_DIM, TAG_CFA_PATTERN,
+             TAG_CFA_PLANE_COLOR, TAG_DEFAULT_CROP_ORIGIN, TAG_DEFAULT_CROP_SIZE,
+             TAG_ACTIVE_AREA)
+SIZE_SOURCES = ("rawpy_visible", "default_crop", "raw_ifd")
+
+
+def cfa_from_tags(repeat_dim, pattern, plane_color=(0, 1, 2)):
+    """Bayer order string ("BGGR", ...) from the DNG CFA tags of the raw IFD.
+
+    CFAPattern lists, row by row, the plane index at each site of the repeat tile;
+    CFAPlaneColor maps plane index to color (0 red, 1 green, 2 blue).
+    """
+    rows, cols = repeat_dim
+    if (rows, cols) != (2, 2) or len(pattern) != 4:
+        raise ValueError(f"not a 2x2 Bayer tile: CFARepeatPatternDim={repeat_dim}")
+    return "".join("RGB"[plane_color[v]] for v in pattern)
+
+
+def _exif_identity(path):
+    """LensModel and focal lengths from the same place lens_id() reads them.
+
+    Missing tags come back as None instead of raising, so files without an Exif
+    IFD can still be described.
+    """
+    with tifffile.TiffFile(path) as t:
+        tag = t.pages[0].tags.get("ExifTag")
+        exif = tag.value if tag is not None else {}
+    fl = exif.get("FocalLength")
+    return dict(lens_model=exif.get("LensModel"),
+                focal_length_mm=round(fl[0] / fl[1], 3) if fl else None,
+                focal_length_35mm=exif.get("FocalLengthIn35mmFilm"))
+
+
+def camera_identity(path):
+    """Camera and raw-format facts for one raw file, each read from the file itself.
+
+    The CFA order is read two independent ways, from the DNG CFAPattern tag of the
+    full-resolution raw IFD and from rawpy (LibRaw), and they must agree. Image size
+    is reported from every source that has one, because they can differ: rawpy's
+    visible raw array (what the measurements actually use), the raw IFD's
+    ImageWidth x ImageLength, and the DNG DefaultCropSize. Sizes are (width, height).
+
+    Raises ValueError if the full-resolution IFD is LinearRaw (already demosaiced,
+    for example Apple ProRAW) rather than a CFA mosaic.
+    """
+    path = Path(path)
+    ifds = read_tiff_ifds(path, _RAW_TAGS)
+    raw_ifds = [d for d in ifds if d.get(TAG_NEW_SUBFILE_TYPE, (None,))[0] == 0]
+    if not raw_ifds:
+        raise ValueError(f"{path.name}: no full-resolution IFD (NewSubfileType = 0)")
+    raw_ifd = raw_ifds[0]
+    photometric = raw_ifd.get(TAG_PHOTOMETRIC, (None,))[0]
+    if photometric == PHOTOMETRIC_LINEAR_RAW:
+        raise ValueError(f"{path.name}: raw IFD is LinearRaw (already demosaiced, e.g. "
+                         f"ProRAW), not a Bayer mosaic")
+    if photometric != PHOTOMETRIC_CFA:
+        raise ValueError(f"{path.name}: raw IFD PhotometricInterpretation is "
+                         f"{photometric}, expected {PHOTOMETRIC_CFA} (CFA)")
+
+    ifd0 = ifds[0] if ifds and ifds[0]["where"] == "IFD0" else {}
+    cfa_tag = cfa_from_tags(raw_ifd[TAG_CFA_REPEAT_DIM], raw_ifd[TAG_CFA_PATTERN],
+                            raw_ifd.get(TAG_CFA_PLANE_COLOR, (0, 1, 2)))
+
+    with rawpy.imread(str(path)) as raw:
+        desc = raw.color_desc.decode()
+        cfa_rawpy = "".join(desc[i] for i in raw.raw_pattern.flatten())
+        visible_h, visible_w = raw.raw_image_visible.shape
+    if cfa_rawpy != cfa_tag:
+        raise ValueError(f"{path.name}: CFA disagrees, tag says {cfa_tag}, "
+                         f"rawpy says {cfa_rawpy}")
+
+    crop = raw_ifd.get(TAG_DEFAULT_CROP_SIZE)
+    return dict(
+        file=path.name,
+        **_exif_identity(path),
+        make=ifd0.get(TAG_MAKE),
+        model=ifd0.get(TAG_MODEL),
+        software=ifd0.get(TAG_SOFTWARE),
+        cfa_pattern=cfa_tag,
+        raw_ifd_where=raw_ifd["where"],
+        size_rawpy_visible=(int(visible_w), int(visible_h)),
+        size_raw_ifd=(int(raw_ifd[TAG_IMAGE_WIDTH][0]), int(raw_ifd[TAG_IMAGE_LENGTH][0])),
+        size_default_crop=(int(round(crop[0])), int(round(crop[1]))) if crop else None,
+        active_area=raw_ifd.get(TAG_ACTIVE_AREA),
+    )
+
+
+def series_identity(paths):
+    """camera_identity() for every file in a series; raise if any of them differ.
+
+    Everything except the file name must match across the series. Returns
+    (identity of the first file, number of files checked).
+    """
+    paths = [Path(p) for p in paths]
+    if not paths:
+        raise ValueError("series_identity: no files given")
+    ids = [camera_identity(p) for p in paths]
+    first = {k: v for k, v in ids[0].items() if k != "file"}
+    for p, ident in zip(paths[1:], ids[1:]):
+        diff = {k: (first[k], v) for k, v in ident.items() if k != "file" and v != first[k]}
+        if diff:
+            raise SystemExit(f"{p.name} differs from {paths[0].name}: {diff}")
+    return ids[0], len(ids)
+
+
+def print_identity(ident, n_files=None):
+    """Readable summary for the terminal and the report, flagging size disagreements."""
+    head = f"Camera identity ({n_files} files agree)" if n_files else f"Camera identity ({ident['file']})"
+    print(head)
+    for k, v in ident.items():
+        print(f"  {k:20s} {v}")
+    sizes = {s: ident[f"size_{s}"] for s in SIZE_SOURCES if ident.get(f"size_{s}")}
+    if len(set(sizes.values())) > 1:
+        print("  NOTE: image size depends on the source: "
+              + ", ".join(f"{k} {w}x{h}" for k, (w, h) in sizes.items()))
+
+
+def identity_results_entries(ident, size_from="rawpy_visible"):
+    """The camera-description keys of results.json, from camera_identity().
+
+    size_from picks which size goes in raw_width_px / raw_height_px; see
+    SIZE_SOURCES. capture_app is not included: the Software tag may name the OS or
+    the app, so check ident["software"] and set that key deliberately.
+    """
+    if size_from not in SIZE_SOURCES:
+        raise ValueError(f"size_from must be one of {SIZE_SOURCES}")
+    size = ident[f"size_{size_from}"]
+    if size is None:
+        raise ValueError(f"this file has no {size_from} size")
+    if ident["lens_model"] is None:
+        raise ValueError(f"{ident['file']}: no LensModel in the Exif IFD")
+    return {"camera": ident["lens_model"], "cfa_pattern": ident["cfa_pattern"],
+            "raw_width_px": size[0], "raw_height_px": size[1]}
 
 
 def _to_float(value):
