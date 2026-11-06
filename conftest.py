@@ -2,15 +2,25 @@
 
 Every core-algorithm test runs on simulated data (a synthetic camera, rendered
 boards, synthetic DNGs) with known answers. These options add tests that run the same
-algorithms on your own captures, where the answer is not known but must be plausible:
+algorithms on your own captures, where the answer is not known but must be plausible.
+Run from the repository root:
 
     uv run pytest --calibration-images images/iPhone16/Lightroom/Checkerboard
     uv run pytest --calibration-images <folder> --calibration-exposure 1/125
     uv run pytest --sample-dng <one DNG from the camera>
 
-Without an option, its tests are skipped. pytest reads command-line options only
-from conftest.py (or a plugin), which is why this file exists; the import path still
-comes from tests/__init__.py.
+Without an option, its tests are skipped.
+
+Why this file is at the repository root and not in tests/: pytest reads the command
+line before it collects tests, so options must be registered by a conftest.py that it
+loads first. When an option is not yet known, "--sample-dng images/x.dng" is read as an
+unknown flag followed by a test path, and pytest then loads only conftests on that
+path's way up to the root; a conftest inside tests/ is never among them, so the option
+stays "unrecognized". The root is above every path in the repository, so here it is
+always loaded. For a path outside the repository, write the option as one token,
+--sample-dng=/path/to/file.dng. (pytest docs: pytest_addoption "should be implemented
+only in plugins or conftest.py files situated at the tests root directory".)
+The import path for the tests still comes from tests/__init__.py.
 """
 from pathlib import Path
 

@@ -52,3 +52,8 @@ learning = [
 package = false
 # Without this, uv installs every group by default and the split does nothing.
 default-groups = []
+
+[tool.pytest.ini_options]
+# Collect tests only from tests/ (not the homework scripts), and give pytest a config
+# file so the repository root is always its rootdir.
+testpaths = ["tests"]
