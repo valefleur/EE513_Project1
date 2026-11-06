@@ -16,8 +16,12 @@ CFA_CODES = {"RGGB": (0, 1, 1, 2), "BGGR": (2, 1, 1, 0), "GRBG": (1, 0, 2, 1), "
 
 
 def write_dng(path, cfa="BGGR", size=(64, 48), crop=(56, 40), photometric=32803,
-              noise_profile=None, software="TestApp 1.0", lens_model=DEFAULT_LENS):
-    """Write a small DNG. lens_model=None leaves out the Exif IFD entirely."""
+              noise_profile=None, software="TestApp 1.0", lens_model=DEFAULT_LENS,
+              raw_data=None):
+    """Write a small DNG. lens_model=None leaves out the Exif IFD entirely.
+    raw_data: optional uint16 mosaic (height x width) to store instead of the ramp."""
+    if raw_data is not None:
+        size = (raw_data.shape[1], raw_data.shape[0])
     w, h = size
     preview = np.zeros((12, 16, 3), np.uint8)
     ifd0_tags = [(271, "s", 0, "TestMake", True), (272, "s", 0, "Test Phone", True),
@@ -31,7 +35,8 @@ def write_dng(path, cfa="BGGR", size=(64, 48), crop=(56, 40), photometric=32803,
     raw_tags = [(50714, "H", 1, 100, True), (50717, "H", 1, 4095, True),
                 (50719, "I", 2, (4, 4), True), (50720, "I", 2, crop, True)]
     if photometric == 32803:
-        data = (np.arange(h * w).reshape(h, w) % 4000 + 100).astype(np.uint16)
+        data = (raw_data if raw_data is not None
+                else (np.arange(h * w).reshape(h, w) % 4000 + 100)).astype(np.uint16)
         raw_tags += [(33421, "H", 2, (2, 2), True), (33422, "B", 4, CFA_CODES[cfa], True),
                      (50710, "B", 3, (0, 1, 2), True)]
     else:                                   # LinearRaw: three samples per pixel

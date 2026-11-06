@@ -13,7 +13,10 @@ def fake_steps(monkeypatch):
     def color(args):
         calls.append(args)
         return {"delta_e_mean_after_ccm": [1.23, 0.04]}
-    monkeypatch.setattr(project1, "MEASUREMENTS", {"color": color})
+    def geometry(args):
+        calls.append(args)
+        return {"focal_length_px": [2800.0, 3.0]}
+    monkeypatch.setattr(project1, "MEASUREMENTS", {"geometry": geometry, "color": color})
     return calls
 
 
@@ -30,6 +33,18 @@ def test_no_flags_selects_every_measurement():
 
 def test_color_flag_selects_only_color():
     assert project1.selected_steps(parse(["--color"])) == ["color"]
+
+
+def test_geometry_flag_and_step_order():
+    assert project1.selected_steps(parse(["--geometry"])) == ["geometry"]
+    assert project1.selected_steps(parse(["--color", "--geometry"])) == ["geometry", "color"]
+
+
+def test_geometry_option_defaults():
+    args = parse([])
+    assert args.corner_detector == "sb" and not args.free_k3
+    assert args.square_mm == pytest.approx(20.01) and args.square_mm_sd is None
+    assert args.size_from == "rawpy_visible" and args.calibration_images is None
 
 
 def test_unknown_illuminant_is_rejected():
@@ -70,7 +85,7 @@ def test_main_writes_step_and_raw_level_entries(tmp_path, fake_steps):
 def test_no_results_leaves_file_untouched(tmp_path, fake_steps):
     out = tmp_path / "results.json"
     project1.main(["--results", str(out), "--no-results"])
-    assert len(fake_steps) == 1 and not out.exists()
+    assert len(fake_steps) == 2 and not out.exists()
 
 
 def test_percent_complete_is_printed(tmp_path, fake_steps, capsys):

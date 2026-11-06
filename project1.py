@@ -14,15 +14,36 @@ import sys
 from pathlib import Path
 
 import my_library.color_measurement as cm
+import my_library.geometry_measurement as gm
+import my_library.image_metadata as meta
 import my_library.results as res
 from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
 DEFAULT_IMAGES = Path("images/iPhone16/Lightroom")
 DEFAULT_OUTPUT = Path("output/project1")
+CALIBRATION_SUBDIR = "hw1/EXP125th"      # under --images; override with --calibration-images
 
 # Which illuminant round supplies the datasheet's color numbers.
 # --datasheet-illuminant overrides this; None writes no Delta E values.
 DATASHEET_ILLUMINANT = "led"
+
+
+def run_geometry(args):
+    """Measurement 1: intrinsics and lens distortion from the checkerboard captures.
+    Also writes the camera-description keys, read from the calibration DNGs."""
+    folder = args.calibration_images or args.images / CALIBRATION_SUBDIR
+    exposure = gm.parse_exposure(args.calibration_exposure) if args.calibration_exposure else None
+    summary = gm.measure_geometry(
+        folder, args.output / "geometry", args.square_mm, exposure=exposure,
+        exclude=args.exclude or (), detector=args.corner_detector, fix_k3=not args.free_k3,
+        undistort_file=args.undistort_file)
+    exif = summary["exif"]
+    entries = gm.results_entries(summary["cal"], summary["n_used"], exif["pitch_um"],
+                                 exif["pitch_rel_sd"], args.square_mm, args.square_mm_sd)
+    entries.update(meta.identity_results_entries(summary["ident"], size_from=args.size_from))
+    print(f"\nfocal_length_mm uses the EXIF-route pitch {exif['pitch_um']:.4f} um "
+          f"(camera_specs.pitch_um {cam_spec.pitch_um} is kept for the homework scripts)")
+    return entries
 
 
 def run_color(args):
@@ -48,6 +69,7 @@ def run_color(args):
 
 # Order here is the order steps run in. Add geometry, mtf, noise, dynamic range here.
 MEASUREMENTS = {
+    "geometry": run_geometry,
     "color": run_color,
 }
 
@@ -57,6 +79,8 @@ def build_parser():
         description="EE 513 Project 1: measure a camera and write results.json.",
         epilog="With no measurement flags, every implemented measurement runs.")
     steps = p.add_argument_group("measurements (choose any; default is all)")
+    steps.add_argument("--geometry", action="store_true",
+                       help="checkerboard calibration: intrinsics, distortion, undistort figure")
     steps.add_argument("--color", action="store_true",
                        help="ColorChecker: color correction matrix and Delta E before and after")
 
@@ -76,6 +100,30 @@ def build_parser():
     raw.add_argument("--white-level", type=int, default=cam_spec.saturation_dn, metavar="DN",
                      help=f"saturation level (default: {cam_spec.saturation_dn}, measured "
                           "in HW4 Problem 1)")
+
+    geo = p.add_argument_group("geometry options")
+    geo.add_argument("--calibration-images", type=Path, metavar="PATH",
+                     help=f"checkerboard captures (default: --images/{CALIBRATION_SUBDIR})")
+    geo.add_argument("--calibration-exposure", metavar="SECONDS",
+                     help="use only captures at this exposure time, e.g. 1/125")
+    geo.add_argument("--exclude", nargs="+", metavar="FILE",
+                     help="calibration files to leave out (state why in the report)")
+    geo.add_argument("--corner-detector", choices=gm.DETECTORS, default="sb",
+                     help="sb: findChessboardCornersSB (default); "
+                          "classic: findChessboardCorners + cornerSubPix")
+    geo.add_argument("--free-k3", action="store_true",
+                     help="also fit k3 (default holds it at zero, per HW2 feedback: a free k3 "
+                          "trades off against k2 and destabilizes the fit)")
+    geo.add_argument("--square-mm", type=float, default=gm.analyze.SQUARE_MM, metavar="MM",
+                     help=f"measured checkerboard square size (default: {gm.analyze.SQUARE_MM})")
+    geo.add_argument("--square-mm-sd", type=float, metavar="MM",
+                     help="uncertainty of --square-mm (default: none yet)")
+    geo.add_argument("--undistort-file", metavar="FILE",
+                     help="view for the undistort figure (default: the one reaching "
+                          "farthest from the frame center)")
+    geo.add_argument("--size-from", choices=meta.SIZE_SOURCES, default="rawpy_visible",
+                     help="which image size goes in raw_width_px/raw_height_px "
+                          "(default: rawpy_visible)")
 
     color = p.add_argument_group("color options")
     color.add_argument("--illuminant-rounds", nargs="+", choices=list(cm.COLOR_ROUNDS),

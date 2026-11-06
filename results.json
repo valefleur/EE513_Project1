@@ -33,8 +33,11 @@
   ],
   "dark_current_e_per_s": null,
   "iso_of_noise_measurement": 64,
-  "black_level_dn": null,
-  "white_level_dn": null,
+  "black_level_dn": [
+    528.0,
+    null
+  ],
+  "white_level_dn": 4095,
   "vendor_noiseprofile_present": true,
   "dynamic_range_stops": [
     10.9,
@@ -43,7 +46,16 @@
   "dynamic_range_criterion": "DR = log2(full well / read noise), with full well = (saturation - black level) / conversion gain and the floor at the read noise, i.e. SNR = 1 at the low end in the read-noise-limited regime.",
   "delta_e_metric": "CIEDE2000",
   "colorchecker_reference_set": "ColorChecker24 - After November 2014",
-  "delta_e_mean_before_ccm": null,
-  "delta_e_mean_after_ccm": null,
-  "delta_e_worst_after_ccm": null
+  "delta_e_mean_before_ccm": [
+    9.5,
+    0.16
+  ],
+  "delta_e_mean_after_ccm": [
+    4.1,
+    0.52
+  ],
+  "delta_e_worst_after_ccm": [
+    8.14,
+    1.18
+  ]
 }

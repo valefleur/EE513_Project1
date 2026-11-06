@@ -15,9 +15,9 @@ if __name__ == "__main__":
     print(f"iPhone 16 Pro Max:")
     cam = 'iphone'
 
-    SPEED_UP = True
+    SPEED_UP = False
     TEST = False
-    SHOW = True
+    SHOW = False
 
     camera_path = 'images/iPhone16/'
     calib_path = 'not_lightroom/all_calib_images/'

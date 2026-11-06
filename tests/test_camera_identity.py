@@ -101,3 +101,14 @@ def test_series_identity_reports_but_accepts_software_change(tmp_path, capsys):
     ident, n = meta.series_identity([a, b])
     assert n == 2
     assert "Software tag" in capsys.readouterr().out
+
+
+
+# ------------------------------------------------ real data (opt-in, see conftest.py)
+
+def test_real_dng_identity(real_sample_dng):
+    ident = meta.camera_identity(real_sample_dng)          # CFA tag vs rawpy checked inside
+    meta.print_identity(ident)
+    assert ident["lens_model"]
+    assert ident["cfa_pattern"] in ("RGGB", "BGGR", "GRBG", "GBRG")
+    print(f"lens_id() size {meta.lens_id(real_sample_dng)[3]} vs raw IFD {ident['size_raw_ifd']}")
