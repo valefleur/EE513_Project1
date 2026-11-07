@@ -796,6 +796,236 @@ def difference_structure(a, b, black, block=8):
                 blocks_plain=blocks_plain, blocks_matched=blocks_matched, blocks_plane=blocks_plane)
 
 
+def noise_power_spectrum(diffs, band_low=(0.02, 0.15), band_high=(0.35, 0.5)):
+    """Normalized noise power spectrum of difference images, averaged over pairs.
+
+    The math. For each noise image d (zero mean, N pixels) the periodogram
+        P(fx, fy) = |FFT2(d)|^2 / (N var(d))
+    is normalized so that its average over all frequencies is 1 (Parseval's theorem:
+    the sum of |FFT|^2 equals N times the sum of d^2). For independent pixels the
+    expected periodogram is flat at 1 everywhere. By the Wiener-Khinchin theorem P is
+    the Fourier transform of the autocorrelation rho(u, v), so the anti-correlated
+    neighbors measured by neighbor_correlation must appear here as a spectrum that
+    rises toward high frequency: for lag-1 correlations alone,
+        P(fx, fy) = 1 + 2 rho_x cos(2 pi fx) + 2 rho_y cos(2 pi fy),
+    below 1 near zero frequency and above 1 near Nyquist (0.5) when rho < 0. If the noise
+    is white noise passed through a filter H, P is |H(f)|^2 normalized to mean 1, so the
+    spectrum shows the filter's frequency response directly.
+
+    One periodogram scatters by about 100% per frequency bin. Averaging the normalized
+    periodograms of n pairs reduces that by sqrt(n); the 1-D profiles average many
+    bins further. Frequencies are in cycles per sample of the image (cycles per
+    green-plane pixel for a green plane; Nyquist 0.5). The zero-frequency bin carries
+    no information after mean and plane removal and is left out of the profiles.
+
+    Parameters
+    ----------
+    diffs : sequence of ndarray
+        Noise images of equal shape, e.g. plane-removed pair differences.
+    band_low, band_high : (float, float), default (0.02, 0.15) and (0.35, 0.5)
+        Radial frequency bands (cycles per sample) for the summary ratio.
+
+    Returns
+    -------
+    dict
+        nps : 2-D averaged spectrum, zero frequency at the center (fftshift).
+        fx, fy : frequency axes for nps (cycles per sample).
+        horizontal, vertical : (f, P) 1-D spectra of rows and of columns (P averaged
+            over the other frequency axis), f > 0.
+        radial : (f, P) averaged in rings of width 1/min(h, w).
+        low, high, ratio : mean P in band_low and band_high, and high / low
+            (about 1 for independent noise; > 1 for sharpening, < 1 for smoothing).
+        n_pairs : how many images were averaged.
+    """
+    diffs = [np.asarray(d, float) for d in diffs]
+    h, w = diffs[0].shape
+    acc = np.zeros((h, w))
+    for d in diffs:
+        d0 = d - d.mean()
+        acc += np.abs(np.fft.fft2(d0)) ** 2 / (d0.size * d0.var())
+    nps = np.fft.fftshift(acc / len(diffs))
+    fx = np.fft.fftshift(np.fft.fftfreq(w))
+    fy = np.fft.fftshift(np.fft.fftfreq(h))
+    horizontal = nps.mean(axis=0)            # spectrum of rows: average over fy
+    vertical = nps.mean(axis=1)              # spectrum of columns: average over fx
+    keep_x, keep_y = fx > 0, fy > 0
+    fr = np.hypot(*np.meshgrid(fx, fy))
+    edges = np.arange(0.0, 0.5 + 1e-9, 1.0 / min(h, w))
+    centers, ring = [], []
+    for lo, hi in zip(edges[1:-1], edges[2:]):
+        sel = (fr >= lo) & (fr < hi)
+        centers.append(0.5 * (lo + hi)); ring.append(nps[sel].mean())
+    band = lambda b: float(nps[(fr >= b[0]) & (fr < b[1])].mean())
+    low, high = band(band_low), band(band_high)
+    return dict(nps=nps, fx=fx, fy=fy,
+                horizontal=(fx[keep_x], horizontal[keep_x]), vertical=(fy[keep_y], vertical[keep_y]),
+                radial=(np.array(centers), np.array(ring)),
+                low=low, high=high, ratio=high / low, n_pairs=len(diffs),
+                band_low=band_low, band_high=band_high)
+
+
+def remove_plane(d):
+    """Subtract the least-squares plane d0 + gx x + gy y from a 2-D image.
+
+    Parameters
+    ----------
+    d : ndarray
+        A 2-D image, e.g. a pair difference.
+
+    Returns
+    -------
+    ndarray
+        The residual, same shape as d.
+    """
+    d = np.asarray(d, float)
+    h, w = d.shape
+    A = _plane(h, w)
+    coef, *_ = np.linalg.lstsq(A, d.ravel(), rcond=None)
+    return d - (A @ coef).reshape(h, w)
+
+
+def dark_frame_pairs(folder, size=128):
+    """Pairs of dark frames taken at the same exposure time and ISO.
+
+    Frames are grouped by (exposure, ISO) from their metadata and paired in file-name
+    order within each group (1st with 2nd, 3rd with 4th, ...); an odd frame left over
+    in a group is not used.
+
+    Parameters
+    ----------
+    folder : str or Path
+        Dark frames (lens covered).
+    size : int, default 128
+        Side of the central green-plane patch, as for the flat fields.
+
+    Returns
+    -------
+    (pairs, isos) : tuple
+        pairs : list of (a, b, exposure_s) with the two patches in DN.
+        isos : sorted list of the ISO values present.
+    """
+    groups = {}
+    for path in flat_field_files(folder):
+        md = meta.raw_metadata(path)
+        groups.setdefault((md["exposure_s"], md["iso"]), []).append(path)
+    pairs = []
+    for (exposure, _), paths in sorted(groups.items()):
+        for p1, p2 in zip(paths[0::2], paths[1::2]):
+            a, _ = meta.green_patch(p1, size)
+            b, _ = meta.green_patch(p2, size)
+            pairs.append((a, b, exposure))
+    return pairs, sorted({iso for _, iso in groups})
+
+
+def dark_difference_spectrum(folder):
+    """Noise power spectrum of dark-frame differences: read noise only.
+
+    The math. A dark frame has no photons, so the difference of two dark frames taken
+    at the same settings holds only read noise (plus a negligible amount of dark-
+    current shot noise), with the fixed pattern cancelled. Read noise arises in the
+    readout electronics, after the photodiode. If its spectrum has the same shape as
+    the flat-field spectrum (shot plus read noise), whatever shapes the spectrum acts
+    after readout, on all noise alike: a digital step in the path to the DNG. If the
+    dark spectrum were flat while the flat-field one rises, the shaping would act only
+    on the photo-signal (for example optical or electrical crosstalk between photodiodes).
+
+    Each difference has its best-fit plane removed (remove_plane), then the normalized
+    periodograms are averaged (noise_power_spectrum).
+
+    Parameters
+    ----------
+    folder : str or Path
+        Dark frames, several per exposure time.
+
+    Returns
+    -------
+    dict or None
+        None if fewer than one pair. Otherwise the noise_power_spectrum dict, plus
+        iso (list of ISOs present), rho (mean lag-1 neighbor correlation over pairs,
+        (rho_x, rho_y)), and n_pairs.
+    """
+    pairs, isos = dark_frame_pairs(folder)
+    if not pairs:
+        return None
+    diffs = [remove_plane(a - b) for a, b, _ in pairs]
+    spec = noise_power_spectrum(diffs)
+    rhos = np.array([neighbor_correlation(d) for d in diffs])
+    spec.update(iso=isos, rho=tuple(rhos.mean(axis=0)))
+    return spec
+
+
+def plot_spectra_compared(spectra, title, out_png):
+    """Radial noise power spectra of several sources on one plot.
+
+    Parameters
+    ----------
+    spectra : list of (label, spectrum dict from noise_power_spectrum)
+    title : str
+    out_png : str or Path
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    for label, spec in spectra:
+        f, p = spec["radial"]
+        ax.plot(f, p, lw=1.4, label=f"{label} ({spec['n_pairs']} pairs, high/low {spec['ratio']:.2f})")
+    ax.axhline(1.0, color="0.5", ls=":", lw=1)
+    ax.set_xlim(0, 0.5); ax.set_xlabel("frequency (cycles / sample; Nyquist 0.5)")
+    ax.set_ylabel("normalized power (1 = independent noise)")
+    ax.set_title(title, fontsize=11); ax.legend(fontsize=8)
+    fig.tight_layout()
+    out_png = Path(out_png); out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=120); plt.close(fig)
+    return out_png
+
+
+def plot_noise_power_spectrum(spec, title, out_png):
+    """The averaged 2-D noise power spectrum (log scale) and its 1-D profiles.
+
+    Parameters
+    ----------
+    spec : dict
+        The return value of noise_power_spectrum.
+    title : str
+        Figure title.
+    out_png : str or Path
+        Where to save the figure.
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    import matplotlib.pyplot as plt
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.6))
+    fx, fy = spec["fx"], spec["fy"]
+    im = a1.imshow(np.log10(np.maximum(spec["nps"], 1e-3)), cmap="RdBu_r", vmin=-0.5, vmax=0.5,
+                   extent=(fx[0], fx[-1], fy[-1], fy[0]))
+    fig.colorbar(im, ax=a1, label="log10 P  (0 = flat, independent noise)")
+    a1.set_xlabel("fx (cycles / sample)"); a1.set_ylabel("fy (cycles / sample)")
+    a1.set_title(f"2-D spectrum, {spec['n_pairs']} pairs averaged")
+    for (f, p), name, style in ((spec["horizontal"], "rows (along x)", "-"),
+                                (spec["vertical"], "columns (along y)", "-"),
+                                (spec["radial"], "radial average", "k--")):
+        a2.plot(f, p, style, lw=1.5 if style == "k--" else 1.2, label=name)
+    a2.axhline(1.0, color="0.5", ls=":", lw=1)
+    for b, c in ((spec["band_low"], "#cfe3cf"), (spec["band_high"], "#f3d6c4")):
+        a2.axvspan(*b, color=c, alpha=0.5, lw=0)
+    a2.set_xlim(0, 0.5); a2.set_xlabel("frequency (cycles / sample; Nyquist 0.5)")
+    a2.set_ylabel("normalized power (1 = independent noise)")
+    a2.set_title(f"profiles: high / low band = {spec['ratio']:.2f}")
+    a2.legend(fontsize=8)
+    fig.suptitle(title)
+    fig.tight_layout()
+    out_png = Path(out_png); out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=120); plt.close(fig)
+    return out_png
+
+
 def brightest_unclipped_pair(ptc_result, max_peak_frac=0.98):
     """Index of the pair with the highest mean whose peak stays below max_peak_frac of
     the white level (the most sensitive pair for spotting drift; HW3 feedback).
@@ -1047,6 +1277,9 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
         method : the selected fit's name.  iso : the ISO.
         structure : difference_structure of the brightest unclipped pair (or None).
         single : single_frame_bias.  vendor : vendor_noise_profile (or None).
+        spectrum : noise_power_spectrum over the unclipped pairs (or None).
+        dark_spectrum : dark_difference_spectrum (or None).
+        dark is None when the dark frames' ISO differs from the flat fields'.
         dark : measure_dark_current (or None).
     """
     output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
@@ -1107,6 +1340,24 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
                    else "blotches or curvature survive plane removal: drop or reshoot such pairs")
         print(f"  reading: {verdict}")
 
+    noise_power_spec = None
+    unclipped = [p for p, r in zip(ptc_result["pairs"], ptc_result["rows"])
+                 if r["peak"] < 0.98 * ptc_result["white_level"]]
+    if unclipped:
+        diffs = [difference_structure(p["a"], p["b"], p["black"])["d_plane"] for p in unclipped]
+        noise_power_spec = noise_power_spectrum(diffs)
+        plot_noise_power_spectrum(noise_power_spec, f"Noise power spectrum of plane-removed pair differences, ISO {iso}",
+                                  output_dir / "noise_power_spectrum.png")
+        (fh, ph), (fv, pv) = noise_power_spec["horizontal"], noise_power_spec["vertical"]
+        print(f"\nNoise power spectrum ({noise_power_spec['n_pairs']} unclipped pairs averaged; 1 = independent noise):")
+        print(f"  low band {noise_power_spec['band_low'][0]}-{noise_power_spec['band_low'][1]} cy/sample: {noise_power_spec['low']:.2f}; "
+              f"high band {noise_power_spec['band_high'][0]}-{noise_power_spec['band_high'][1]}: {noise_power_spec['high']:.2f}; "
+              f"high / low = {noise_power_spec['ratio']:.2f}")
+        print(f"  near Nyquist: rows {ph[-3:].mean():.2f}, columns {pv[-3:].mean():.2f}"
+              + ("  -> rising toward Nyquist: sharpening-like filtering" if noise_power_spec["ratio"] > 1.1
+                 else "  -> falling toward Nyquist: smoothing-like filtering" if noise_power_spec["ratio"] < 0.9
+                 else "  -> about flat: independent noise"))
+
     single = single_frame_bias(ptc_result)
     print(f"\nSingle frame vs pair difference: single-frame K = {single['fit_single']['K']:.4f} DN/e- "
           f"({100 * (single['K_ratio'] - 1):+.1f}% vs the pair fit, same pairs)")
@@ -1121,7 +1372,33 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
         print(f"  green plane: vendor/yours K {vendor['K_ratio']:.3f}, read noise {vendor['read_ratio']:.3f}")
 
     dark = None
+    dark_spec = None
     if dark_folder and Path(dark_folder).exists():
+        dark_spec = dark_difference_spectrum(dark_folder)
+        if dark_spec is not None:
+            rx, ry = dark_spec["rho"]
+            print(f"\nDark-frame difference spectrum (read noise only; {dark_spec['n_pairs']} pairs, "
+                  f"ISO {', '.join(str(i) for i in dark_spec['iso'])}): low {dark_spec['low']:.2f}, "
+                  f"high {dark_spec['high']:.2f}, high / low = {dark_spec['ratio']:.2f}; "
+                  f"neighbor correlation {rx:+.3f} rows, {ry:+.3f} columns")
+            if noise_power_spec is not None:
+                same = abs(dark_spec["ratio"] - noise_power_spec["ratio"]) < 0.15 * noise_power_spec["ratio"]
+                print("  -> " + ("same shape as the flat fields: the filtering acts after readout, on all noise"
+                                 if same else
+                                 "different shape from the flat fields: the filtering does not act on read noise alike"))
+                plot_spectra_compared([("flat-field differences (shot + read noise)", noise_power_spec),
+                                       ("dark-frame differences (read noise only)", dark_spec)],
+                                      "Noise power spectra, radial average",
+                                      output_dir / "noise_power_spectrum_dark_vs_flat.png")
+
+    dark_iso = None
+    if dark_folder and Path(dark_folder).exists():
+        files = flat_field_files(dark_folder)
+        dark_iso = meta.raw_metadata(files[0])["iso"] if files else None
+    if dark_iso is not None and dark_iso != iso:
+        print(f"\nDark current skipped: the dark frames are ISO {dark_iso} but the flat fields are "
+              f"ISO {iso}, so this fit's gain would convert them wrongly. Use dark frames at ISO {iso}.")
+    elif dark_iso is not None:
         print()
         dark = measure_dark_current(dark_folder, K, sK, plot_path=output_dir / "noise_dark_current.png")
         print(f"  reported (green average): {dark['rate_e_s']:+.3f} +/- {dark['sd_rate_e_s']:.3f} e-/s; "
@@ -1134,7 +1411,8 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
                   for r in ptc_result["rows"]]).to_csv(output_dir / "noise_pairs.csv", index=False)
     return dict(K=K, sK=sK, read_e=read, s_read_e=s_read, c=fit["c"], sc=fit["sc"],
                 knee_e=knee, sd_knee_e=sd_knee, knee_dn=knee * K, method=ptc_result["method"],
-                iso=iso, structure=structure, single=single, vendor=vendor, dark=dark)
+                iso=iso, structure=structure, single=single, vendor=vendor, dark=dark,
+                spectrum=noise_power_spec, dark_spectrum=dark_spec)
 
 
 def noise_results_entries(summary):

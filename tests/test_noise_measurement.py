@@ -300,8 +300,9 @@ def test_report_noise_end_to_end_with_a_gradient_change(tmp_path):
     assert plain["K"] > plane["K"] + 4 * plane["sK"]
     summary = nm.report_noise(result, tmp_path / "out", dark_folder=_simulated_dark_frames(tmp_path / "dark"))
     assert summary["structure"]["R_plain"] > 1.5 and summary["structure"]["R_plane"] < 1.5
+    assert summary["spectrum"]["n_pairs"] >= 10
     for name in ("noise_snr.png", "noise_difference_image.png", "noise_ptc_methods.png",
-                 "noise_dark_current.png", "noise_pairs.csv"):
+                 "noise_dark_current.png", "noise_pairs.csv", "noise_power_spectrum.png"):
         assert (tmp_path / "out" / name).exists(), name
     entries = nm.noise_results_entries(summary)
     results, template = res.load()
@@ -357,3 +358,126 @@ def test_smoothing_gives_positive_correlation():
     a, b = (cv.GaussianBlur(x, (0, 0), 0.7) for x in (a, b))
     rx, ry = nm.difference_structure(a, b, 0.0)["rho"]
     assert rx > 0.1 and ry > 0.1
+
+
+# ------------------------------------------------ noise power spectrum
+
+def _filtered_noise(kernel, n_images=30, size=64, seed=0):
+    """White noise images passed through `kernel` with circular (FFT) convolution,
+    and the exact normalized |H|^2 of that filter on the same frequency grid."""
+    rng = np.random.default_rng(seed)
+    k = np.zeros((size, size))
+    kh, kw = kernel.shape
+    k[:kh, :kw] = kernel
+    k = np.roll(k, (-(kh // 2), -(kw // 2)), axis=(0, 1))
+    H2 = np.abs(np.fft.fft2(k)) ** 2
+    images = [np.real(np.fft.ifft2(np.fft.fft2(rng.normal(0, 1, (size, size))) * np.fft.fft2(k)))
+              for _ in range(n_images)]
+    return images, np.fft.fftshift(H2 / H2.mean())
+
+
+SHARPEN = -0.12 * np.ones((3, 3)); SHARPEN[1, 1] = 1 + 8 * 0.12
+
+
+def test_spectrum_of_independent_noise_is_flat_at_one():
+    images, _ = _filtered_noise(np.ones((1, 1)))
+    spec = nm.noise_power_spectrum(images)
+    assert spec["nps"].mean() == pytest.approx(1.0)              # Parseval normalization
+    assert spec["ratio"] == pytest.approx(1.0, abs=0.08)
+    assert np.allclose(spec["radial"][1], 1.0, atol=0.25)
+
+
+def test_spectrum_recovers_a_known_sharpening_filter():
+    """The averaged spectrum of filtered white noise is the filter's normalized |H|^2."""
+    images, H2 = _filtered_noise(SHARPEN)
+    spec = nm.noise_power_spectrum(images)
+    f, measured = spec["radial"]
+    fr = np.hypot(*np.meshgrid(spec["fx"], spec["fy"]))
+    exact = [H2[(fr >= lo) & (fr < lo + 1 / 64)].mean() for lo in f - 0.5 / 64]
+    assert np.allclose(measured, exact, rtol=0.12)
+    assert spec["ratio"] > 1.3
+
+
+def test_spectrum_and_autocorrelation_agree():
+    """Wiener-Khinchin: the lag-1 correlation recovered from the spectrum equals the one
+    measured directly in the image."""
+    images, _ = _filtered_noise(SHARPEN, n_images=1, size=128)
+    spec = nm.noise_power_spectrum(images)
+    FX, FY = np.meshgrid(spec["fx"], spec["fy"])
+    rho_x_from_spectrum = np.mean(spec["nps"] * np.cos(2 * np.pi * FX))
+    rho_y_from_spectrum = np.mean(spec["nps"] * np.cos(2 * np.pi * FY))
+    rho_x, rho_y = nm.neighbor_correlation(images[0])
+    assert rho_x_from_spectrum == pytest.approx(rho_x, abs=0.01)
+    assert rho_y_from_spectrum == pytest.approx(rho_y, abs=0.01)
+
+
+def test_smoothing_makes_the_spectrum_fall():
+    images, _ = _filtered_noise(np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]]) / 16)
+    assert nm.noise_power_spectrum(images)["ratio"] < 0.5
+
+
+# ------------------------------------------------ dark-frame spectrum and ISO check
+
+def _sharpen(x):
+    import cv2 as cv
+    return cv.filter2D(x, -1, SHARPEN, borderType=cv.BORDER_REFLECT)
+
+
+def _dark_frames_filtered(folder, where=None, iso=64, n_exposures=4, per_exposure=4, size=320, seed=11):
+    """Dark DNGs (read noise only). where=None: no filtering; "plane": sharpen each Bayer
+    color plane separately (same-color neighbors coupled); "mosaic": sharpen the full
+    mosaic (adjacent, different-color pixels coupled)."""
+    rng = np.random.default_rng(seed)
+    folder.mkdir(parents=True, exist_ok=True)
+    for i in range(n_exposures):
+        t = 0.01 * (i + 1)
+        for k in range(per_exposure):
+            noise = rng.normal(0, K_TRUE * READ_E_TRUE, (size, size))
+            if where == "mosaic":
+                noise = _sharpen(noise)
+            elif where == "plane":
+                for r in (0, 1):
+                    for c in (0, 1):
+                        noise[r::2, c::2] = _sharpen(noise[r::2, c::2].copy())
+            raw = np.clip(np.rint(BLACK + 50 + noise), 0, WHITE).astype(np.uint16)
+            write_dng(folder / f"D_{i}_{k}.dng", raw_data=raw, crop=(size, size), exposure_s=t, iso=iso)
+    return folder
+
+
+def test_dark_spectrum_is_flat_without_filtering(tmp_path):
+    spec = nm.dark_difference_spectrum(_dark_frames_filtered(tmp_path / "d"))
+    assert spec["n_pairs"] == 8 and spec["iso"] == [64]
+    assert spec["ratio"] == pytest.approx(1.0, abs=0.12)
+
+
+def test_dark_spectrum_sees_filtering_within_a_color_plane(tmp_path):
+    spec = nm.dark_difference_spectrum(_dark_frames_filtered(tmp_path / "d", where="plane"))
+    assert spec["ratio"] > 1.3
+    assert spec["rho"][0] < -0.05 and spec["rho"][1] < -0.05
+
+
+def test_full_mosaic_sharpening_barely_shows_in_one_green_plane(tmp_path):
+    """The clue in the real data: same-color neighbors are 2 full-res pixels apart, and a
+    3x3 kernel on the full mosaic couples them only through k(-1) k(+1), a small positive
+    term. So a green plane looks nearly independent; anti-correlated green-plane noise
+    means the filtering acts within each color plane."""
+    spec = nm.dark_difference_spectrum(_dark_frames_filtered(tmp_path / "d", where="mosaic"))
+    assert 0.85 < spec["ratio"] < 1.15
+    assert abs(spec["rho"][0]) < 0.04 and abs(spec["rho"][1]) < 0.04
+
+
+def test_dark_current_is_skipped_when_iso_differs(tmp_path, capsys):
+    folder = _simulated_flat_fields(tmp_path / "flats", LEVELS)
+    result = nm.measure_ptc(folder, WHITE, BLACK)
+    dark = _dark_frames_filtered(tmp_path / "dark", iso=320)
+    summary = nm.report_noise(result, tmp_path / "out", dark_folder=dark)
+    assert summary["dark"] is None
+    assert "Dark current skipped" in capsys.readouterr().out
+    assert summary["dark_spectrum"] is not None                       # the shape check still runs
+    assert (tmp_path / "out" / "noise_power_spectrum_dark_vs_flat.png").exists()
+    assert "dark_current_e_per_s" not in nm.noise_results_entries(summary)
+
+
+def test_remove_plane_removes_an_exact_plane():
+    yy, xx = np.mgrid[0:32, 0:32]
+    assert np.abs(nm.remove_plane(3 + 0.2 * xx - 0.1 * yy)).max() < 1e-9
