@@ -31,9 +31,13 @@ and read noise are equal; SNR there is sigma_r / sqrt(2). A floor at SNR = 1 lie
 the knee (read-noise limited); a floor at SNR = 10 lies above it once sigma_r is under
 about 14 e- (shot-noise limited).
 """
+import contextlib
+import io
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 import my_library.image_metadata as meta
 import my_library.photon_transfer_curve as ptc
@@ -264,8 +268,193 @@ def flat_field_files(folder):
                   if p.is_file() and p.suffix.lower() in ptc.RAW_SUFFIXES)
 
 
-def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF):
-    """Pair-difference photon transfer fit on the consecutive flat-field pairs in folder.
+def gain_matched_pair_variance(a, b, black):
+    """Temporal noise variance of one frame from a pair, with the pair's means matched.
+
+    The math. Two frames of the same flat scene, above black, are
+        a = s(x) + n_a(x),   b = s(x) (1 - eps) + n_b(x)
+    where s(x) is the signal pattern (the mean S times pixel-gain variation and lens
+    shading), n_a and n_b are independent temporal noise, and eps is the fraction by
+    which the light changed between the frames. The plain pair difference is
+        a - b = eps s(x) + n_a - n_b,
+    and the variance (which removes the mean) is 2 sigma^2 + eps^2 var_x[s(x)], with
+    var_x[s(x)] = (p S)^2, p the relative pattern spread (PRNU plus shading). The mean
+    offset eps S itself never enters the variance. So a uniform change matters only
+    through eps p S: with eps = 0.6% and p = 2% that is 0.012% of S, a variance about
+    a thousandth of the shot noise even near saturation. Gain matching is therefore
+    nearly a no-op on a flat field, and computing it shows that numerically.
+
+    It does NOT explain or fix the HW3 bend. Prof. McNames measured 0.5-0.7% *of the
+    mean* surviving the difference; a uniform change leaves only eps p S. A residual
+    that large must vary across the patch (light changing differently across it, or
+    the camera moving across a non-flat scene): see plane_removed_pair_variance and
+    difference_structure.
+
+    Scaling b by g = mean(a) / mean(b) (means above black) removes eps s(x) for a
+    uniform change: a - g b = n_a - g n_b, var = sigma^2 (1 + g^2), so the per-frame
+    variance is var(a - g b) / (1 + g^2) (dividing by 1 + g^2, not 2, accounts for
+    scaling b's noise by g).
+
+    Parameters
+    ----------
+    a, b : ndarray
+        The two patches, raw DN (black not yet subtracted), same shape.
+    black : float
+        Black level in DN.
+
+    Returns
+    -------
+    (var, eps) : tuple of float
+        var : per-frame temporal noise variance in DN^2, matched means.
+        eps : mean(a) / mean(b) - 1, the relative change in light between the frames.
+    """
+    sa = np.asarray(a, float) - black
+    sb = np.asarray(b, float) - black
+    g = sa.mean() / sb.mean()
+    return float(np.var(sa - g * sb) / (1.0 + g ** 2)), float(g - 1.0)
+
+
+def _plane(h, w):
+    """Design matrix [1, x, y] for a least-squares plane over an h x w patch."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    return np.column_stack([np.ones(h * w), xx.ravel(), yy.ravel()])
+
+
+def plane_removed_pair_variance(a, b, black=0.0):
+    """Temporal noise variance of one frame from a pair, after removing a fitted plane
+    from the difference image.
+
+    The math. If the light changed by a different fraction across the patch between the
+    two frames (a sky gradient shifting, the camera moving slightly across a scene that
+    is not perfectly flat), the difference a - b holds that change as a smooth surface
+    on top of the noise, and its variance grows with the square of the signal: the
+    upward bend in HW3's photon transfer curve. To first order such a change is a
+    gradient, a plane d0 + gx x + gy y. Fitting that plane to d = a - b by least
+    squares and subtracting it leaves the noise, n_a - n_b, whose variance is 2 sigma^2.
+    Removing 3 fitted parameters from N pixels lowers the residual variance by
+    (N - 3) / N, which is corrected, so
+
+        sigma^2 = var(d - plane) * N / (N - 3) / 2.
+
+    Curvature or blotches are not removed; difference_structure's block ratio says
+    whether they remain.
+
+    Parameters
+    ----------
+    a, b : ndarray
+        The two patches of one pair, raw DN, same shape.
+    black : float, default 0.0
+        Black level in DN (cancels in the difference; kept for a uniform signature).
+
+    Returns
+    -------
+    float
+        Per-frame temporal noise variance in DN^2.
+    """
+    d = (np.asarray(a, float) - black) - (np.asarray(b, float) - black)
+    h, w = d.shape
+    A = _plane(h, w)
+    coef, *_ = np.linalg.lstsq(A, d.ravel(), rcond=None)
+    resid = d.ravel() - A @ coef
+    n = resid.size
+    return float(np.var(resid) * n / (n - 3) / 2.0)
+
+
+def fit_ptc_weighted(mean, var, span, cutoff, n_pixels, n_params_removed=0, iterations=2):
+    """Weighted straight-line fit var = K S + c over pairs below cutoff x span.
+
+    The math. Each pair's variance is estimated from N pixels. For Gaussian noise, a
+    sample variance has a relative standard deviation of sqrt(2 / (N - 1)), so its
+    absolute error is proportional to the variance itself:
+        sd(var_i) = (K S_i + c) sqrt(2 / (N_i - 1 - n_params_removed)).
+    Bright pairs therefore carry much larger absolute errors than dim ones. An
+    unweighted fit (photon_transfer_curve.fit_ptc) treats all points as equally
+    uncertain, which misplaces the uncertainty between slope and intercept: on a
+    simulated sensor its reported sd(K) was 1.6x too small and sd(c) 1.6x too large.
+    Weighted least squares minimizes sum((var_i - K S_i - c)^2 / sd_i^2), and the
+    covariance of (K, c) then follows from the known sd_i (np.polyfit with
+    cov="unscaled").
+
+    The weights use the model's predicted variance, not the measured one (weighting by
+    the measured value would favor points that happened to come out low): start from
+    the unweighted fit, then refit `iterations` times with sd_i from the latest line.
+
+    Verified on 30 simulated sensors: sd(K) is calibrated (actual scatter / reported =
+    0.98); sd(c) is conservative (0.66), partly because rounding to whole DN gives the
+    noise lighter tails than a Gaussian, so variance estimates scatter about 13% less
+    than sqrt(2 / (N - 1)) assumes. Both are 1.3x (K) to 4x (c) more precise than the
+    unweighted fit.
+
+    Check of the assumption: if the points scatter about the line more than the sd_i
+    predict (reduced chi-square chi2_red = chi^2 / (n - 2) > 1, e.g. from drift between
+    frames), the covariance is scaled by chi2_red, so the uncertainties are never
+    smaller than the scatter supports.
+
+    Parameters
+    ----------
+    mean, var : array_like
+        Mean signal above black (DN) and variance (DN^2) of each pair.
+    span : float
+        Saturation span in DN.
+    cutoff : float
+        Fit only pairs with mean < cutoff x span.
+    n_pixels : array_like or int
+        Pixels behind each variance (N_i).
+    n_params_removed : int, default 0
+        Parameters fitted out of each difference image before its variance (3 for the
+        plane-removed estimate), reducing the degrees of freedom.
+    iterations : int, default 2
+        Reweighting passes after the initial unweighted fit.
+
+    Returns
+    -------
+    dict
+        K, sK (DN/e-); c, sc (DN^2); read, s_read (e-, nan if c <= 0, with the K-c
+        covariance included); used (boolean mask of pairs in the fit); chi2_red; cov
+        (2 x 2 covariance of K, c, after any chi2_red scaling).
+    """
+    mean = np.asarray(mean, float)
+    var = np.asarray(var, float)
+    n = np.broadcast_to(np.asarray(n_pixels, float), mean.shape)
+    used = mean < cutoff * span
+    x, y, dof_pix = mean[used], var[used], n[used] - 1 - n_params_removed
+    K, c = np.polyfit(x, y, 1)
+    for _ in range(iterations):
+        sd = np.maximum(K * x + c, 1e-12) * np.sqrt(2.0 / dof_pix)
+        (K, c), cov = np.polyfit(x, y, 1, w=1.0 / sd, cov="unscaled")
+    chi2_red = float(np.sum(((y - K * x - c) / sd) ** 2) / max(len(x) - 2, 1))
+    cov = cov * max(chi2_red, 1.0)
+    sK, sc = np.sqrt(np.diag(cov))
+    if c > 0:
+        read = np.sqrt(c) / K
+        d_dc, d_dK = 0.5 / (np.sqrt(c) * K), -np.sqrt(c) / K ** 2
+        s_read = np.sqrt(d_dc ** 2 * sc ** 2 + d_dK ** 2 * sK ** 2 + 2 * d_dc * d_dK * cov[0, 1])
+    else:
+        read = s_read = float("nan")
+    return dict(K=float(K), sK=float(sK), c=float(c), sc=float(sc), read=float(read),
+                s_read=float(s_read), used=used, chi2_red=chi2_red, cov=cov)
+
+
+PAIR_METHODS = ("pair difference", "gain-matched", "plane-removed")
+_VAR_KEY = {"pair difference": "var", "gain-matched": "var_matched", "plane-removed": "var_plane"}
+
+
+def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, method="pair difference"):
+    """Photon transfer fit on the consecutive flat-field pairs in folder.
+
+    The math (05_photon_transfer.ipynb sections 1 and 3). For a mean signal S (DN above
+    black) the temporal noise variance of one frame is
+        var(S) = K S + c,   K = conversion gain (DN/e-), c = (K sigma_r)^2 (DN^2)
+    because shot noise in electrons has variance equal to the mean (Poisson) and the
+    camera scales electrons by K (variances by K^2). Each pair gives one (S, var) point;
+    a straight-line fit over the pairs below cutoff x span gives K (slope) and c
+    (intercept), weighted by each point's known sampling error (fit_ptc_weighted). The
+    read noise in electrons is sqrt(c) / K.
+
+    Three variances are computed for every pair: the plain pair difference (HW3), the
+    gain-matched one (gain_matched_pair_variance) and the plane-removed one
+    (plane_removed_pair_variance). All three are fitted; `method` picks which fit is
+    "the" fit used for results.
 
     Runs the lens_id assertion and series identity on the files first, and uses the
     central 128 x 128 patch of one green plane, as in HW3. Stops (SystemExit) if there
@@ -282,16 +471,24 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF):
         Black level in DN (e.g. 528). The span is white_level - black_level.
     cutoff : float, default LOW_SIGNAL_CUTOFF (0.10)
         Fit only pairs whose mean is below this fraction of the span.
+    method : str, default "pair difference"
+        One of PAIR_METHODS: which fit the results use.
 
     Returns
     -------
     dict
-        fit : dict from photon_transfer_curve.fit_ptc (K, sK in DN/e-; c, sc in DN^2;
-            read, s_read in e-; used, a boolean mask of the pairs in the fit).
-        rows : list of dict, one per pair (mean, var, iso, black, flagged, ...).
+        fit : the selected fit, a dict from fit_ptc_weighted (K, sK in DN/e-; c, sc in
+            DN^2; read, s_read in e-; used, a boolean mask of pairs; chi2_red; cov).
+        fits : {method name: fit} for all three methods.
+        method : the selected method's name.
+        rows : list of dict, one per pair (mean, var, var_matched, var_plane, eps, var_single,
+            iso, black, white, peak, flagged, files, ...).
+        pairs : list of dict, the patches (a, b) and settings of each pair.
         span : float, the span in DN.  iso : the ISO of every pair.
-        cutoff : float, as given.  n_used : int, pairs in the fit.
+        cutoff : float, as given.  n_used : int, pairs in the selected fit.
         ident : dict, the camera identity from series_identity.
+        files : list of Path, the flat-field files.
+        white_level, black_level : as given.
     """
     paths = flat_field_files(folder)
     if len(paths) < 4:
@@ -300,7 +497,12 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF):
     meta.assert_one_camera(paths)
     ident, n = meta.series_identity(paths)
 
-    rows = ptc.analyze_pairs(ptc.load_flat_pairs(folder))
+    with contextlib.redirect_stdout(io.StringIO()):     # load_flat_pairs prints a HW3 heading
+        pairs = ptc.load_flat_pairs(folder)
+    rows = ptc.analyze_pairs(pairs)
+    for row, pair in zip(rows, pairs):
+        row["var_matched"], row["eps"] = gain_matched_pair_variance(pair["a"], pair["b"], pair["black"])
+        row["var_plane"] = plane_removed_pair_variance(pair["a"], pair["b"], pair["black"])
     isos = sorted({r["iso"] for r in rows})
     blacks = sorted({r["black"] for r in rows})
     if len(isos) != 1:
@@ -309,17 +511,23 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF):
         print(f"  note: files declare black level {blacks}; the span uses {black_level} DN")
     span = float(white_level - black_level)
 
+    if method not in PAIR_METHODS:
+        raise ValueError(f"method must be one of {PAIR_METHODS}")
     mean = np.array([r["mean"] for r in rows])
-    var = np.array([r["var"] for r in rows])
-    fit = ptc.fit_ptc(mean, var, span, cutoff)
+    n_pix = np.array([r["n_pixels"] for r in rows])
+    fits = {m: fit_ptc_weighted(mean, np.array([r[_VAR_KEY[m]] for r in rows]), span, cutoff,
+                                n_pix, n_params_removed=3 if m == "plane-removed" else 0)
+            for m in PAIR_METHODS}
+    fit = fits[method]
     n_used = int(fit["used"].sum())
     flagged = sum(r["flagged"] for r in rows)
     print(f"{len(rows)} pairs at ISO {isos[0]}; {n_used} below {cutoff:.0%} of the "
-          f"{span:.0f} DN span used in the fit; {flagged} pair(s) flagged for mean mismatch")
+          f"{span:.0f} DN span used in the fit ({method}); {flagged} pair(s) flagged for mean mismatch")
     if n_used < 3:
         raise SystemExit(f"only {n_used} pairs below {cutoff:.0%} of the span; too few to fit")
-    return dict(fit=fit, rows=rows, span=span, iso=isos[0], cutoff=cutoff,
-                n_used=n_used, ident=ident)
+    return dict(fit=fit, fits=fits, method=method, rows=rows, pairs=pairs, span=span,
+                iso=isos[0], cutoff=cutoff, n_used=n_used, ident=ident, files=paths,
+                white_level=white_level, black_level=black_level)
 
 
 def report_dynamic_range(ptc_result):
@@ -389,7 +597,6 @@ def write_dynamic_range_table(summary, path):
     Path
         The path written.
     """
-    import pandas as pd
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(summary["table"]).to_csv(path, index=False)
@@ -421,3 +628,535 @@ def results_entries(summary, cutoff=LOW_SIGNAL_CUTOFF, decimals=2):
     return {"dynamic_range_stops": [round(summary["dr"], decimals), round(summary["sd_dr"], decimals)],
             "dynamic_range_criterion": CRITERION.format(cutoff=cutoff, exact=summary["exact_snr1"],
                                                         db=summary["dr_db"])}
+
+
+# ================================================================= measurement 3: noise
+# The functions below are the noise step (project1.py --noise). They share
+# measure_ptc with the dynamic-range step, so the gain, read noise and dynamic range
+# always come from one fit.
+
+def neighbor_correlation(d):
+    """Correlation of each pixel's value with its right and lower neighbor.
+
+    The math. For independent pixel noise the correlation between horizontally (or
+    vertically) adjacent pixels of a difference image is 0, within about
+    1 / sqrt(number of pairs). A negative value means a pixel's noise tends to go
+    opposite to its neighbors': sharpening (a high-pass boost) does exactly that. A
+    positive value means smoothing (blurring, denoising). The difference image is
+    used because the scene and the fixed pattern cancel in it, leaving only noise.
+
+    Note the spacing: in one green plane of the Bayer mosaic, adjacent samples are two
+    full-resolution pixels apart.
+
+    Parameters
+    ----------
+    d : ndarray
+        A 2-D noise image (e.g. a difference image), any offset.
+
+    Returns
+    -------
+    (rho_x, rho_y) : tuple of float
+        Lag-1 correlation along rows (x) and down columns (y).
+    """
+    d = np.asarray(d, float) - np.mean(d)
+    rho_x = np.sum(d[:, :-1] * d[:, 1:]) / np.sqrt(np.sum(d[:, :-1] ** 2) * np.sum(d[:, 1:] ** 2))
+    rho_y = np.sum(d[:-1, :] * d[1:, :]) / np.sqrt(np.sum(d[:-1, :] ** 2) * np.sum(d[1:, :] ** 2))
+    return float(rho_x), float(rho_y)
+
+
+def autocorrelation(d, max_lag):
+    """Correlation of a noise image with itself shifted by (u, v), for |u|, |v| <= max_lag.
+
+    Parameters
+    ----------
+    d : ndarray
+        A 2-D noise image (e.g. a difference image).
+    max_lag : int
+        Largest shift in pixels, in each direction.
+
+    Returns
+    -------
+    ndarray, shape (2 max_lag + 1, 2 max_lag + 1)
+        rho[max_lag + v, max_lag + u] is the correlation at shift u along rows (x) and v
+        down columns (y); the center is 1.
+    """
+    d = np.asarray(d, float) - np.mean(d)
+    h, w = d.shape
+    rho = np.empty((2 * max_lag + 1, 2 * max_lag + 1))
+    for v in range(-max_lag, max_lag + 1):
+        for u in range(-max_lag, max_lag + 1):
+            a = d[max(v, 0):h + min(v, 0), max(u, 0):w + min(u, 0)]
+            b = d[max(-v, 0):h + min(-v, 0), max(-u, 0):w + min(-u, 0)]
+            rho[max_lag + v, max_lag + u] = np.sum(a * b) / np.sqrt(np.sum(a * a) * np.sum(b * b))
+    return rho
+
+
+def predicted_block_ratio(d, block=8):
+    """Block-structure ratio R expected from the noise's own spatial correlation.
+
+    The math. For noise with variance sigma^2 and correlation rho(u, v) between pixels
+    offset by (u, v), the mean of a b x b block has variance
+        (sigma^2 / b^4) sum over all pixel pairs in the block of rho(offset)
+      = (sigma^2 / b^2) sum_{|u|,|v| < b} (b - |u|)(b - |v|) rho(u, v) / b^2,
+    because a b-wide block holds (b - |u|) pairs of pixels offset by u along a row (and
+    likewise in v). Dividing by the independent-noise value sigma^2 / b^2 gives
+        R^2 = sum_{|u|,|v| < b} (b - |u|)(b - |v|) rho(u, v) / b^2.
+    With no correlation only rho(0, 0) = 1 survives and R = 1. Keeping only adjacent
+    neighbors gives the shorthand R ~ sqrt(1 + 2 (rho_x + rho_y)(b - 1) / b), but a
+    sharpening kernel also correlates diagonal and two-apart pixels, so the full sum is
+    used. If the measured R matches this prediction, the correlation alone accounts for
+    it; if the measured R is larger, there is also structure (a gradient, blotches).
+
+    Parameters
+    ----------
+    d : ndarray
+        A 2-D noise image (e.g. the plane-removed difference image).
+    block : int, default 8
+        Block side in pixels.
+
+    Returns
+    -------
+    float
+        The predicted R (nan if the sum is not positive).
+    """
+    lag = block - 1
+    rho = autocorrelation(d, lag)
+    u = np.arange(-lag, lag + 1)
+    weight = np.outer(block - np.abs(u), block - np.abs(u)) / block ** 2
+    r2 = float(np.sum(weight * rho))
+    return float(np.sqrt(r2)) if r2 > 0 else float("nan")
+
+
+def difference_structure(a, b, black, block=8):
+    """Does the pair's difference image hold structure beyond noise? A number, not a look.
+
+    The math. If a and b differ only by temporal noise, d = a - b is white noise with
+    some standard deviation sigma_d, and the mean of a block of block x block pixels has
+    standard deviation sigma_d / block. So the ratio
+        R = std(block means of d) / (sigma_d / block)
+    is about 1 for pure noise. A uniform change in light (eps) leaves eps s(x) in d,
+    whose pixel-gain and shading pattern survives block averaging, so R > 1. A
+    gradient or blotches (light that changed differently across the patch) also give
+    R > 1 and, unlike a uniform change, survive gain matching. A plane fitted to d,
+    d ~ d0 + gx x + gy y, measures any gradient directly.
+
+    R is computed for the plain difference, the gain-matched one (b scaled by
+    g = mean(a) / mean(b)) and the plane-removed one. A uniform change in light barely
+    shows (it leaves only eps x the small pattern; see gain_matched_pair_variance), so
+    R_plain well above 1 means the light changed differently across the patch. If
+    removing a plane brings R back to about 1, the change was a gradient and
+    plane_removed_pair_variance handles it; if not, blotches or curvature remain.
+
+    Parameters
+    ----------
+    a, b : ndarray
+        The two patches of one pair, raw DN, same shape (cropped to a multiple of block).
+    black : float
+        Black level in DN.
+    block : int, default 8
+        Side of the averaging blocks, in pixels.
+
+    Returns
+    -------
+    dict
+        eps : mean(a) / mean(b) - 1 (means above black).
+        R_plain, R_matched, R_plane : the block-structure ratios (about 1 for pure noise).
+        rho : (rho_x, rho_y), neighbor correlations of the plane-removed difference
+            (neighbor_correlation); R_predicted : the R its full spatial correlation
+            implies (predicted_block_ratio).
+        gradient_dn : (gx, gy) of the plane fitted to the plain difference, in DN per
+            pixel; gradient_matched_dn likewise for the matched difference.
+        d_plain, d_matched, d_plane : the difference images (DN), for plotting.
+        blocks_plain, blocks_matched, blocks_plane : their block-mean maps (DN).
+    """
+    sa = np.asarray(a, float) - black
+    sb = np.asarray(b, float) - black
+    h, w = (sa.shape[0] // block) * block, (sa.shape[1] // block) * block
+    sa, sb = sa[:h, :w], sb[:h, :w]
+    g = sa.mean() / sb.mean()
+
+    A = _plane(h, w)
+
+    def analyze(d):
+        blocks = d.reshape(h // block, block, w // block, block).mean(axis=(1, 3))
+        ratio = blocks.std() / (d.std() / block)
+        coef, *_ = np.linalg.lstsq(A, d.ravel(), rcond=None)
+        return float(ratio), (float(coef[1]), float(coef[2])), blocks, coef
+
+    d_plain, d_matched = sa - sb, sa - g * sb
+    R_plain, grad_plain, blocks_plain, coef = analyze(d_plain)
+    R_matched, grad_matched, blocks_matched, _ = analyze(d_matched)
+    d_plane = d_plain - (A @ coef).reshape(h, w)
+    R_plane, _, blocks_plane, _ = analyze(d_plane)
+    rho = neighbor_correlation(d_plane)
+    return dict(eps=float(g - 1.0), R_plain=R_plain, R_matched=R_matched, R_plane=R_plane,
+                rho=rho, R_predicted=predicted_block_ratio(d_plane, block=block),
+                gradient_dn=grad_plain, gradient_matched_dn=grad_matched,
+                d_plain=d_plain, d_matched=d_matched, d_plane=d_plane,
+                blocks_plain=blocks_plain, blocks_matched=blocks_matched, blocks_plane=blocks_plane)
+
+
+def brightest_unclipped_pair(ptc_result, max_peak_frac=0.98):
+    """Index of the pair with the highest mean whose peak stays below max_peak_frac of
+    the white level (the most sensitive pair for spotting drift; HW3 feedback).
+
+    Parameters
+    ----------
+    ptc_result : dict
+        The return value of measure_ptc.
+    max_peak_frac : float, default 0.98
+        Pairs whose brightest pixel reaches this fraction of the white level are skipped.
+
+    Returns
+    -------
+    int or None
+        Index into ptc_result["rows"] and ["pairs"], or None if every pair is clipped.
+    """
+    rows = ptc_result["rows"]
+    ok = [i for i, r in enumerate(rows) if r["peak"] < max_peak_frac * ptc_result["white_level"]]
+    return max(ok, key=lambda i: rows[i]["mean"]) if ok else None
+
+
+def single_frame_bias(ptc_result):
+    """Why a single frame gives the wrong answer, in numbers.
+
+    The math. The variance of one frame across the patch is spatial, not temporal: it
+    adds every pixel-to-pixel difference that is the same in every frame,
+        var_single(S) = K S + c + DSNU^2 + (p S)^2,
+    where DSNU is the dark-signal (offset) pattern and p the relative gain pattern:
+    photo-response non-uniformity (PRNU) plus any lens shading inside the patch. The
+    pair difference cancels both, leaving K S + c. Two consequences:
+      1. A straight line through single-frame variances has a slope inflated by the
+         (p S)^2 term: a bias toward higher K, growing with the fit range, not just a
+         noisier estimate (Prof. McNames, HW3 feedback, item 7).
+      2. The excess, var_single - var_pair = DSNU^2 + (p S)^2, is a parabola in S;
+         fitting it gives p, the pattern's relative size.
+
+    Parameters
+    ----------
+    ptc_result : dict
+        The return value of measure_ptc (its rows carry var_single and the pair
+        variance of the selected method).
+
+    Returns
+    -------
+    dict
+        fit_single : straight-line fit (fit_ptc) of the single-frame variances over the
+            same pairs as the selected fit.
+        K_ratio : K_single / K_pair (> 1 means the single-frame slope is too steep).
+        p : relative pattern spread (PRNU plus in-patch shading), from
+            excess = DSNU^2 + p^2 S^2 fitted over all unclipped pairs.
+        dsnu_dn : sqrt of the fitted offset term in DN (nan if negative).
+    """
+    rows, span = ptc_result["rows"], ptc_result["span"]
+    key = _VAR_KEY[ptc_result["method"]]
+    mean = np.array([r["mean"] for r in rows])
+    single = np.array([r["var_single"] for r in rows])
+    pair = np.array([r[key] for r in rows])
+    fit_single = ptc.fit_ptc(mean, single, span, ptc_result["cutoff"])
+    ok = np.array([r["peak"] < 0.98 * ptc_result["white_level"] for r in rows])
+    A = np.column_stack([np.ones(ok.sum()), mean[ok] ** 2])
+    (offset, p2), *_ = np.linalg.lstsq(A, (single - pair)[ok], rcond=None)
+    return dict(fit_single=fit_single, K_ratio=float(fit_single["K"] / ptc_result["fit"]["K"]),
+                p=float(np.sqrt(p2)) if p2 > 0 else float("nan"),
+                dsnu_dn=float(np.sqrt(offset)) if offset > 0 else float("nan"))
+
+
+def vendor_noise_profile(path, K, read, sK=None, s_read=None):
+    """The camera's own noise model (DNG NoiseProfile tag), converted to K and read noise.
+
+    The math. The DNG NoiseProfile gives, per color plane, a scale S and offset O of the
+    noise variance in normalized units x = (D - black) / span:
+        var(x) = S x + O.
+    In DN, D - black = span x and variances scale by span^2, so
+        var_DN = S span (D - black) + O span^2,
+    which is the photon transfer line with K = S span and c = O span^2. The read noise
+    in electrons is sqrt(c) / K = sqrt(O) / S. (image_metadata.compare_noise_profile
+    does this conversion and prints it.)
+
+    Parameters
+    ----------
+    path : str or Path
+        A raw file from the same series (same ISO) as the measurement.
+    K, read : float
+        Your conversion gain (DN/e-) and read noise (e-), for the ratios.
+    sK, s_read : float, optional
+        Their standard deviations, printed alongside.
+
+    Returns
+    -------
+    dict or None
+        None if the file has no NoiseProfile. Otherwise: planes (list of dicts with S,
+        O, K, read per plane), green (the plane matching the green measurement: the
+        middle of three, or the only one), K_ratio and read_ratio (vendor / yours).
+    """
+    planes = meta.compare_noise_profile(path, K=K, read=read, s_K=sK, s_read=s_read)
+    if not planes:
+        return None
+    green = planes[1] if len(planes) == 3 else planes[0]
+    return dict(planes=planes, green=green, K_ratio=green["K"] / K,
+                read_ratio=green["read"] / read if read else float("nan"))
+
+
+def measure_dark_current(folder, K, sK, plot_path=None):
+    """Dark current from lens-capped frames at several exposure times.
+
+    The math. With no light, the mean level rises with exposure time t only through
+    thermally generated electrons: mean(t) = black + K D t, D in e-/s. A straight-line
+    fit of each color channel's mean against t gives the slope K D in DN/s; dividing by
+    K gives D, with the fit's standard error and the uncertainty of K combined
+    (photon_transfer_curve.dark_current_fit). A slope consistent with zero is a
+    result: it says dark current is below what these exposures can detect.
+
+    Runs the lens_id assertion on the dark frames first (LensModel is recorded even
+    with the lens covered).
+
+    Parameters
+    ----------
+    folder : str or Path
+        Dark frames, any number per exposure time, at one ISO.
+    K, sK : float
+        Conversion gain and its sd (DN/e-), from the photon transfer fit.
+    plot_path : str or Path, optional
+        Where to save the level-against-exposure figure.
+
+    Returns
+    -------
+    dict
+        rows : per-exposure statistics (photon_transfer_curve.dark_frame_stats).
+        fit : per-channel slopes and rates, plus "summary" (photon_transfer_curve.
+            dark_current_fit).
+        rate_e_s, sd_rate_e_s : the green-average dark current and its sd (e-/s),
+            the value reported (the noise measurement is on a green plane).
+        upper_95_e_s : the largest channel rate + 2 sd, a conservative bound.
+        black_measured_dn : the green-average fit's level at zero exposure, a measured
+            black level to compare with the declared one. (The shortest exposure's mean
+            is not used: it includes dark signal accumulated during that exposure.)
+    """
+    files = flat_field_files(folder)
+    if not files:
+        raise SystemExit(f"no dark frames in {folder}")
+    print(f"lens_id assertion (Prof. McNames, Project 1 page) over {len(files)} dark frames:")
+    meta.assert_one_camera(files)
+    rows = ptc.dark_frame_stats(folder, K=K)
+    fit = ptc.dark_current_fit(rows, K, sK, plot_path=plot_path, title="Dark frames")
+    plt.close("all")
+    g = fit["G avg"]
+    return dict(rows=rows, fit=fit, rate_e_s=float(g["rate"]), sd_rate_e_s=float(g["s_rate"]),
+                upper_95_e_s=float(fit["summary"]["upper_95"]),
+                black_measured_dn=float(g["level0"] + rows[0]["black_levels"][0]))
+
+
+def plot_ptc_methods(ptc_result, single, out_png):
+    """Photon transfer curve with the three variance estimates and their fits, log-log.
+
+    Parameters
+    ----------
+    ptc_result : dict
+        The return value of measure_ptc.
+    single : dict
+        The return value of single_frame_bias.
+    out_png : str or Path
+        Where to save the figure.
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    rows, span, cutoff = ptc_result["rows"], ptc_result["span"], ptc_result["cutoff"]
+    mean = np.array([r["mean"] for r in rows])
+    series = [(m, _VAR_KEY[m], ptc_result["fits"][m], mk) for m, mk in zip(PAIR_METHODS, "osd")]
+    series.append(("single frame", "var_single", single["fit_single"], "^"))
+    grid = np.logspace(np.log10(max(mean.min(), 1e-3)), np.log10(span), 200)
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    for name, key, fit, marker in series:
+        y = np.array([r[key] for r in rows])
+        line, = ax.loglog(mean, y, marker, mfc="none", ms=5,
+                          label=f"{name}: K = {fit['K']:.4f} DN/e-")
+        ax.loglog(grid, fit["K"] * grid + max(fit["c"], 1e-9), "-", lw=1, color=line.get_color())
+    ax.axvline(cutoff * span, color="0.4", ls=":", lw=1)
+    ax.text(cutoff * span * 1.05, 0.05, f"fit cutoff {cutoff:.0%}", transform=ax.get_xaxis_transform(), fontsize=8)
+    ax.set_xlabel("mean signal above black (DN)"); ax.set_ylabel("variance (DN$^2$)")
+    ax.set_title(f"Photon transfer, ISO {ptc_result['iso']}: variance estimates compared")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    out_png = Path(out_png); out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=130); plt.close(fig)
+    return out_png
+
+
+def plot_difference_image(structure, title, out_png):
+    """Plain and plane-removed difference images of one pair, with their block means.
+
+    Parameters
+    ----------
+    structure : dict
+        The return value of difference_structure.
+    title : str
+        Figure title (e.g. the file names).
+    out_png : str or Path
+        Where to save the figure.
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    fig, axes = plt.subplots(1, 4, figsize=(14, 3.8))
+    lim = 3 * structure["d_plain"].std()
+    blim = 4 * structure["d_plain"].std() / (structure["d_plain"].shape[0] / structure["blocks_plain"].shape[0])
+    for ax, img, name, v in ((axes[0], structure["d_plain"], "difference a - b", lim),
+                             (axes[1], structure["blocks_plain"], f"block means, R = {structure['R_plain']:.2f}", blim),
+                             (axes[2], structure["d_plane"], "plane removed", lim),
+                             (axes[3], structure["blocks_plane"], f"block means, R = {structure['R_plane']:.2f}", blim)):
+        im = ax.imshow(img, cmap="RdBu_r", vmin=-v, vmax=v)
+        ax.set_title(name, fontsize=10); ax.axis("off")
+        fig.colorbar(im, ax=ax, fraction=0.046, label="DN")
+    fig.suptitle(f"{title}   (eps = {100 * structure['eps']:+.2f}%; R about 1 means noise only)")
+    fig.tight_layout()
+    out_png = Path(out_png); out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=110); plt.close(fig)
+    return out_png
+
+
+def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=None):
+    """Run every part of the noise measurement on one photon transfer result and print it.
+
+    Parts: the gain and read noise from the selected fit, both fits side by side; the
+    knee where read noise and shot noise are equal (sigma_r^2 electrons, where
+    SNR = sigma_r / sqrt(2)) with the SNR curve; the difference image of the brightest
+    unclipped pair; the single-frame bias; the vendor NoiseProfile; and dark current.
+
+    Parameters
+    ----------
+    ptc_result : dict
+        The return value of measure_ptc.
+    output_dir : str or Path
+        Folder for the figures and the per-pair CSV.
+    dark_folder : str or Path, optional
+        Dark frames for the dark current; skipped if None or missing.
+    noise_profile_file : str or Path, optional
+        Raw file whose NoiseProfile to compare; defaults to the first flat field.
+
+    Returns
+    -------
+    dict
+        K, sK, read_e, s_read_e, c, sc : the selected fit (DN/e-, e-, DN^2).
+        knee_e, sd_knee_e, knee_dn : where shot and read noise are equal.
+        method : the selected fit's name.  iso : the ISO.
+        structure : difference_structure of the brightest unclipped pair (or None).
+        single : single_frame_bias.  vendor : vendor_noise_profile (or None).
+        dark : measure_dark_current (or None).
+    """
+    output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
+    fit, fits, iso = ptc_result["fit"], ptc_result["fits"], ptc_result["iso"]
+    K, sK, read, s_read = fit["K"], fit["sK"], fit["read"], fit["s_read"]
+
+    print(f"\nPhoton transfer, ISO {iso}, fit below {ptc_result['cutoff']:.0%} of the span "
+          f"({ptc_result['n_used']} pairs); selected: {ptc_result['method']}")
+    for name, f in fits.items():
+        mark = "  <- selected" if name == ptc_result["method"] else ""
+        print(f"  {name:16s} K = {f['K']:.4f} +/- {f['sK']:.4f} DN/e-   read noise = "
+              f"{f['read']:.2f} +/- {f['s_read']:.2f} e-   intercept c = {f['c']:.3f} +/- {f['sc']:.3f} DN^2{mark}")
+    eps = np.array([r["eps"] for r in ptc_result["rows"]])
+    print(f"  light change between frames (eps): median |eps| {100 * np.median(np.abs(eps)):.2f}%, "
+          f"largest {100 * eps[np.argmax(np.abs(eps))]:+.2f}%")
+
+    knee = read ** 2
+    sd_knee = 2 * read * s_read
+    print(f"\nRegimes: read noise and shot noise are equal at the knee, S = sigma_r^2 = "
+          f"{knee:.1f} +/- {sd_knee:.1f} e- = {knee * K:.2f} DN above black (SNR there "
+          f"{read / np.sqrt(2):.2f}). Below it the camera is read-noise limited, above it "
+          "photon (shot-noise) limited.")
+    if np.isfinite(read):
+        with contextlib.redirect_stdout(io.StringIO()):
+            _, fig = ptc.plot_snr(ptc_result["rows"], fit, saturation_dn=ptc_result["white_level"],
+                                  fit_frac=ptc_result["cutoff"], plot_path=output_dir / "noise_snr.png",
+                                  title=f"SNR vs signal, ISO {iso}")
+        plt.close(fig)
+
+    i = brightest_unclipped_pair(ptc_result)
+    structure = None
+    if i is not None:
+        pair = ptc_result["pairs"][i]
+        structure = difference_structure(pair["a"], pair["b"], pair["black"])
+        label = f"{pair['files'][0]} / {pair['files'][1]}"
+        plot_difference_image(structure, label, output_dir / "noise_difference_image.png")
+        print(f"\nDifference image of the brightest unclipped pair ({label}, "
+              f"{ptc_result['rows'][i]['mean']:.0f} DN): eps = {100 * structure['eps']:+.2f}%")
+        print(f"  block structure ratio R (about 1 = noise only): plain {structure['R_plain']:.2f}, "
+              f"gain-matched {structure['R_matched']:.2f}, plane removed {structure['R_plane']:.2f}")
+        rx, ry = structure["rho"]
+        n_pairs = structure["d_plain"].size
+        print(f"  neighbor correlation of the noise: {rx:+.3f} along rows, {ry:+.3f} down columns "
+              f"(independent pixels: 0 +/- {1 / np.sqrt(n_pairs):.3f}); the noise's spatial "
+              f"correlation alone predicts R = {structure['R_predicted']:.2f}")
+        if min(rx, ry) < -3 / np.sqrt(n_pairs):
+            print("  -> negative: neighbors' noise goes opposite ways, the signature of sharpening "
+                  "before the DNG is written (it would also raise the measured MTF)")
+        elif max(rx, ry) > 3 / np.sqrt(n_pairs):
+            print("  -> positive: neighbors' noise moves together, the signature of smoothing or "
+                  "noise reduction before the DNG is written")
+        gx, gy = structure["gradient_dn"]
+        n = structure["d_plain"].shape[0]
+        print(f"  fitted gradient: {gx * n:+.2f} DN across the patch in x, {gy * n:+.2f} DN in y")
+        verdict = ("no structure beyond noise" if structure["R_plain"] < 1.5
+                   else "a gradient: removing a plane fixes it (see the plane-removed fit)"
+                   if structure["R_plane"] < 1.5
+                   else "blotches or curvature survive plane removal: drop or reshoot such pairs")
+        print(f"  reading: {verdict}")
+
+    single = single_frame_bias(ptc_result)
+    print(f"\nSingle frame vs pair difference: single-frame K = {single['fit_single']['K']:.4f} DN/e- "
+          f"({100 * (single['K_ratio'] - 1):+.1f}% vs the pair fit, same pairs)")
+    print(f"  the excess variance fits DSNU^2 + (p S)^2 with p = {100 * single['p']:.2f}% "
+          "(PRNU plus shading inside the patch): a bias that grows as S^2, which the pair "
+          "difference cancels")
+    plot_ptc_methods(ptc_result, single, output_dir / "noise_ptc_methods.png")
+
+    print()
+    vendor = vendor_noise_profile(noise_profile_file or ptc_result["files"][0], K, read, sK, s_read)
+    if vendor:
+        print(f"  green plane: vendor/yours K {vendor['K_ratio']:.3f}, read noise {vendor['read_ratio']:.3f}")
+
+    dark = None
+    if dark_folder and Path(dark_folder).exists():
+        print()
+        dark = measure_dark_current(dark_folder, K, sK, plot_path=output_dir / "noise_dark_current.png")
+        print(f"  reported (green average): {dark['rate_e_s']:+.3f} +/- {dark['sd_rate_e_s']:.3f} e-/s; "
+              f"conservative bound {dark['upper_95_e_s']:.3f} e-/s; zero-exposure black "
+              f"{dark['black_measured_dn']:.2f} DN vs declared {ptc_result['black_level']}")
+    elif dark_folder:
+        print(f"\nDark frames: {dark_folder} not found; dark current skipped")
+
+    pd.DataFrame([{k: v for k, v in r.items() if k not in ("files",)} | {"file_a": r["files"][0], "file_b": r["files"][1]}
+                  for r in ptc_result["rows"]]).to_csv(output_dir / "noise_pairs.csv", index=False)
+    return dict(K=K, sK=sK, read_e=read, s_read_e=s_read, c=fit["c"], sc=fit["sc"],
+                knee_e=knee, sd_knee_e=sd_knee, knee_dn=knee * K, method=ptc_result["method"],
+                iso=iso, structure=structure, single=single, vendor=vendor, dark=dark)
+
+
+def noise_results_entries(summary):
+    """The noise keys of results.json.
+
+    Parameters
+    ----------
+    summary : dict
+        The return value of report_noise.
+
+    Returns
+    -------
+    dict
+        conversion_gain_dn_per_e [K, sd], read_noise_e [read, sd],
+        dark_current_e_per_s [rate, sd] (green average; omitted if no dark frames),
+        iso_of_noise_measurement (int), vendor_noiseprofile_present (bool).
+    """
+    out = {"conversion_gain_dn_per_e": [round(summary["K"], 4), round(summary["sK"], 4)],
+           "read_noise_e": [round(summary["read_e"], 2), round(summary["s_read_e"], 2)],
+           "iso_of_noise_measurement": int(summary["iso"]),
+           "vendor_noiseprofile_present": summary["vendor"] is not None}
+    if summary["dark"] is not None:
+        out["dark_current_e_per_s"] = [round(summary["dark"]["rate_e_s"], 3),
+                                       round(summary["dark"]["sd_rate_e_s"], 3)]
+    return out

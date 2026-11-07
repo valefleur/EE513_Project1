@@ -8,7 +8,8 @@ Run from the repository root:
     uv run pytest --calibration-images images/iPhone16/Lightroom/Checkerboard
     uv run pytest --calibration-images <folder> --calibration-exposure 1/125
     uv run pytest --sample-dng <one DNG from the camera>
-    uv run pytest --flat-fields images/iPhone16/Lightroom/ISO64_Sunset
+    uv run pytest --flat-fields images/iPhone16/Lightroom/ISO64_Sunset \
+                  --dark-frames images/iPhone16/Lightroom/ISO64_Dark
 
 Without an option, its tests are skipped.
 
@@ -37,7 +38,9 @@ def pytest_addoption(parser):
     group.addoption("--sample-dng", type=Path, default=None,
                     help="one real DNG for the camera-identity tests")
     group.addoption("--flat-fields", type=Path, default=None,
-                    help="folder of real flat-field pairs for the dynamic-range test")
+                    help="folder of real flat-field pairs for the noise and dynamic-range tests")
+    group.addoption("--dark-frames", type=Path, default=None,
+                    help="folder of real dark frames for the noise test (optional)")
 
 
 def _option_or_skip(request, name):

@@ -24,6 +24,7 @@ DEFAULT_IMAGES = Path("images/iPhone16/Lightroom")
 DEFAULT_OUTPUT = Path("output/project1")
 CALIBRATION_SUBDIR = "hw1/EXP125th"      # under --images; override with --calibration-images
 FLAT_FIELD_SUBDIR = "ISO64_Sunset"       # under --images; the HW3 ISO 64 pairs
+DARK_SUBDIR = "ISO64_Dark"               # under --images; the HW3 lens-capped frames
 
 # Which illuminant round supplies the datasheet's color numbers.
 # --datasheet-illuminant overrides this; None writes no Delta E values.
@@ -48,16 +49,35 @@ def run_geometry(args):
     return entries
 
 
+def photon_transfer(args):
+    """The photon transfer fit shared by the noise and dynamic-range steps, computed once
+    per run (cached on args), so both report from the same fit."""
+    if getattr(args, "_ptc", None) is None:
+        folder = args.flat_fields or args.images / FLAT_FIELD_SUBDIR
+        args._ptc = nm.measure_ptc(folder, args.white_level, args.black_level,
+                                   args.ptc_cutoff, method=args.pair_method)
+    return args._ptc
+
+
+def run_noise(args):
+    """Measurement 3: conversion gain, read noise, SNR and its knee, the single-frame
+    bias, the vendor NoiseProfile, and dark current."""
+    dark = args.dark_frames or args.images / DARK_SUBDIR
+    summary = nm.report_noise(photon_transfer(args), args.output / "noise", dark_folder=dark)
+    return nm.noise_results_entries(summary)
+
+
 def run_dynamic_range(args):
     """Measurement 4: dynamic range from the photon transfer fit (measurement 3's data)."""
-    folder = args.flat_fields or args.images / FLAT_FIELD_SUBDIR
-    result = nm.measure_ptc(folder, args.white_level, args.black_level, args.ptc_cutoff)
+    result = photon_transfer(args)
     summary = nm.report_dynamic_range(result)
     if summary["table"]:
         path = nm.write_dynamic_range_table(summary, args.output / "noise" / "dynamic_range_table.csv")
         print(f"  table written to {path}")
 
-    # The noise keys must come from this same fit; flag it if results.json disagrees.
+    if "noise" in getattr(args, "steps", ()):
+        return nm.results_entries(summary, args.ptc_cutoff)    # same fit, written together
+    # Run alone: the noise keys must come from this same fit; flag it if results.json disagrees.
     current, _ = res.load(args.results)
     for key, value in (("conversion_gain_dn_per_e", summary["K"]), ("read_noise_e", summary["read_e"])):
         held = current.get(key)
@@ -94,6 +114,7 @@ def run_color(args):
 # Order here is the order steps run in. Add geometry, mtf, noise, dynamic range here.
 MEASUREMENTS = {
     "geometry": run_geometry,
+    "noise": run_noise,
     "dynamic_range": run_dynamic_range,
     "color": run_color,
 }
@@ -106,6 +127,9 @@ def build_parser():
     steps = p.add_argument_group("measurements (choose any; default is all)")
     steps.add_argument("--geometry", action="store_true",
                        help="checkerboard calibration: intrinsics, distortion, undistort figure")
+    steps.add_argument("--noise", action="store_true",
+                       help="noise: gain, read noise, SNR and knee, single-frame bias, "
+                            "NoiseProfile, dark current")
     steps.add_argument("--dynamic-range", action="store_true",
                        help="dynamic range from the photon transfer fit of the flat-field pairs")
     steps.add_argument("--color", action="store_true",
@@ -156,6 +180,12 @@ def build_parser():
     noise.add_argument("--flat-fields", type=Path, metavar="PATH",
                        help=f"flat-field pairs, consecutive by file name (default: "
                             f"--images/{FLAT_FIELD_SUBDIR})")
+    noise.add_argument("--dark-frames", type=Path, metavar="PATH",
+                       help=f"lens-capped frames at several exposures (default: --images/{DARK_SUBDIR})")
+    noise.add_argument("--pair-method", choices=nm.PAIR_METHODS, default="pair difference",
+                       metavar="METHOD",
+                       help="variance estimate the results use: 'pair difference' (default), "
+                            "'gain-matched' or 'plane-removed'; all three are always printed")
     noise.add_argument("--ptc-cutoff", type=float, default=nm.LOW_SIGNAL_CUTOFF, metavar="FRACTION",
                        help=f"fit only pairs below this fraction of the saturation span "
                             f"(default: {nm.LOW_SIGNAL_CUTOFF}, per HW3 feedback)")
@@ -206,7 +236,8 @@ def main(argv=None):
     # so it stays [value, null] and shows up in the todo list.
     entries = {"black_level_dn": res.pair(args.black_level),
                "white_level_dn": int(args.white_level)}
-    for name in selected_steps(args):
+    args.steps = selected_steps(args)
+    for name in args.steps:
         print(f"\n=================== {name} ===================")
         entries.update(MEASUREMENTS[name](args))
 
