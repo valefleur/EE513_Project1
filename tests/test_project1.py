@@ -52,6 +52,11 @@ def test_dynamic_range_flag_and_defaults():
     assert args.ptc_cutoff == pytest.approx(0.10) and args.flat_fields is None
 
 
+def test_color_exposure_defaults_to_six_grays():
+    assert parse([]).color_exposure == "grays"
+    assert parse(["--color-exposure", "white"]).color_exposure == "white"
+
+
 def test_noise_flag_and_defaults():
     assert project1.selected_steps(parse(["--noise"])) == ["noise"]
     assert project1.selected_steps(parse(["--dynamic-range", "--noise"])) == ["noise", "dynamic_range"]

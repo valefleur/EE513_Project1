@@ -95,7 +95,7 @@ def run_color(args):
     names = args.illuminant_rounds or list(cm.COLOR_ROUNDS)
     rounds = {r: args.images / cm.COLOR_ROUNDS[r] for r in names}
     summaries = cm.measure_color(rounds, args.white_level, args.output / "color",
-                                 black_level=args.black_level)
+                                 black_level=args.black_level, exposure=args.color_exposure)
 
     entries = {"delta_e_metric": cm.METRIC, "colorchecker_reference_set": cm.wb.REFERENCE}
     if args.datasheet_illuminant is None:
@@ -105,9 +105,19 @@ def run_color(args):
         raise SystemExit(f"--datasheet-illuminant {args.datasheet_illuminant}: "
                          f"no usable charts in that round")
     else:
-        entries = cm.results_entries(summaries[args.datasheet_illuminant])
-        print(f"\nDatasheet color values from the {args.datasheet_illuminant} round:")
-        cm.compare_with_hw4(args.datasheet_illuminant, entries)
+        summary = summaries[args.datasheet_illuminant]
+        entries = cm.results_entries(summary, matrix="pooled")
+        t = summary["per_patch"]
+        print(f"\nPer-patch {cm.METRIC}, {args.datasheet_illuminant} round, mean +/- sd over "
+              f"{summary['n_charts']} charts (after = the pooled matrix, the CCM):")
+        for r in t.itertuples():
+            print(f"  {r.patch:2d} {r.name:15s} before {r.dE_before_mean:5.2f} +/- {r.dE_before_sd:4.2f}"
+                  f"   after {r.dE_after_pooled_mean:5.2f} +/- {r.dE_after_pooled_sd:4.2f}")
+        print(f"\nDatasheet color values from the {args.datasheet_illuminant} round (after = pooled CCM):")
+        if args.color_exposure == "white":
+            cm.compare_with_hw4(args.datasheet_illuminant, entries)
+        else:
+            print("  (HW4 used --color-exposure white; run with it to compare against HW4)")
     return entries
 
 
@@ -191,6 +201,9 @@ def build_parser():
                             f"(default: {nm.LOW_SIGNAL_CUTOFF}, per HW3 feedback)")
 
     color = p.add_argument_group("color options")
+    color.add_argument("--color-exposure", choices=cm.EXPOSURE_METHODS, default="grays",
+                       help="exposure and CIELAB white: 'grays' fits all six neutrals (default, "
+                            "HW4 feedback); 'white' uses patch 19 alone, as HW4 did")
     color.add_argument("--illuminant-rounds", nargs="+", choices=list(cm.COLOR_ROUNDS),
                        metavar="ILLUMINANT",
                        help="illuminant rounds to measure (default: all of "
