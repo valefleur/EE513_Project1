@@ -1,15 +1,20 @@
 """Project 1, measurement 5: color accuracy from ColorChecker captures.
 
-Per chart: locate and sample the 24 patches, white balance on an unclipped mid gray,
-fit a 3x3 least-squares color correction matrix (camera RGB -> reference XYZ) to that
-chart alone, and compute CIEDE2000 per patch before and after the matrix. Per lighting
-round: mean and worst patch, each as the mean over charts with the sample standard
-deviation across the nominally identical charts as its uncertainty.
+Per chart: locate and sample the 24 patches; white balance on an unclipped mid gray
+(von Kries gains); set exposure with one number, by default a least-squares fit over
+all six neutrals (HW4 feedback: the white patch reads low); fit a 3 x 3 least-squares
+matrix from camera RGB to reference XYZ; and compute CIEDE2000 per patch before
+(balanced camera RGB treated as linear sRGB) and after the matrix. Per lighting round:
+the pooled matrix (one fit over every chart, the CCM an ISP would store) and the
+per-chart matrices, the mean and worst patch as the mean over charts with the sample
+standard deviation across the nominally identical charts, the per-patch table, and the
+neutral-patch diagnostics (ratios to white and flare).
 
-This is the method of hw4.py Problems 5, 6, 9 and 10, packaged as functions so that
-project1.py can run it. It reuses my_library.color_chart (patch sampling rule from
-Prof. James McNames, 07_build_an_isp.ipynb section 4) and my_library.white_balance
-(least-squares fit and CIEDE2000, following Prof. McNames' 06_color_matrix.ipynb).
+Started from hw4.py Problems 5, 6, 9 and 10, packaged as functions so that project1.py
+can run it, then extended with the HW4 feedback. It reuses my_library.color_chart
+(patch sampling rule from Prof. James McNames, 07_build_an_isp.ipynb section 4) and
+my_library.white_balance (least-squares fit and CIEDE2000, following Prof. McNames'
+06_color_matrix.ipynb). Run with exposure="white" to reproduce HW4 exactly.
 """
 import json
 from pathlib import Path
@@ -40,10 +45,29 @@ COLOR_ROUNDS = {
 def chart_catalog(rounds, saturation_dn, black_level=None):
     """Catalog of every chart capture (white sheets dropped), numbered within each round.
 
-    Checks, before anything is fitted: one camera across every file, and ISO, exposure
-    and declared black level constant within each round (HW4 Problem 1 requires
-    identical settings within a round; this check is for ColorChecker rounds only).
-    If black_level is given and differs from what a file declares, that is printed.
+    Checks, before anything is fitted: the lens_id assertion and the series identity
+    over every file (one camera), and ISO, exposure and declared black level constant
+    within each round (HW4 Problem 1 requires identical settings within a round; this
+    check is for ColorChecker rounds only). Files whose name contains "_white" are the
+    white sheets shot for shading and are left out.
+
+    Parameters
+    ----------
+    rounds : dict
+        {round name: folder of raw files}.
+    saturation_dn : float
+        Saturation level in DN, used for the per-file clipping statistics.
+    black_level : float, optional
+        The black level that will be subtracted; if it differs from what a file
+        declares, a note is printed.
+
+    Returns
+    -------
+    (catalog, ident, n) : tuple
+        catalog : pandas.DataFrame, one row per chart capture (round, file, path, chart
+            number within the round, metadata and clipping statistics).
+        ident : dict, the camera identity of the first file (series_identity).
+        n : int, the number of files checked.
     """
     catalog = datalog.add_clip_stats(datalog.build_catalog(rounds), saturation_dn)
     catalog = catalog[~catalog["file"].str.contains("_white")].reset_index(drop=True)
@@ -350,14 +374,35 @@ def fit_pooled_matrix(charts, ref_XYZ):
 
 
 def summarize_round(charts):
-    """Round summary from per-chart results (each with de_before, de_after, usable).
+    """Round summary from the per-chart results: mean, worst patch and their spread.
 
-    Each statistic is computed per chart over its usable patches, then reported as the
-    mean over charts, the sample standard deviation across charts (ddof=1), and the
-    standard error of that mean, sd / sqrt(n). With more charts the sd settles toward the
-    true chart-to-chart spread, while the standard error shrinks as 1 / sqrt(n); both
-    cover only what changes between captures, not shared effects such as flare from the
-    same setup (Prof. McNames, HW4 feedback).
+    The math. For each chart, over its usable patches: mean Delta E before, mean after
+    (with that chart's own matrix), and the worst patch after. Each of those three is
+    then summarized across the n charts as
+        mean  = (1/n) sum x_k,
+        sd    = sqrt( sum (x_k - mean)^2 / (n - 1) )      (sample sd, ddof = 1),
+        sem   = sd / sqrt(n)                               (standard error of the mean).
+    The sd describes how much one more capture would vary and settles toward the true
+    chart-to-chart spread as n grows; the sem describes how well the mean is known and
+    shrinks as 1 / sqrt(n). Both cover only what changes between captures, not shared
+    effects such as flare from the same setup (Prof. McNames, HW4 feedback). The
+    datasheet reports the sd (plan Q24); with n = 3 both are rough (an sd from three
+    values is itself uncertain by about 50%).
+
+    "Worst" is the mean over charts of each chart's worst patch, which may be different
+    patches on different charts; worst_patch names the one that is worst most often.
+
+    Parameters
+    ----------
+    charts : list of dict
+        Results of correct_chart, each with de_before, de_after and usable.
+
+    Returns
+    -------
+    dict
+        n_charts; mean_before, mean_after, worst_after (each a dict with mean, std, sem,
+        lo, hi; std and sem are None for one chart); worst_patch ("number name") and
+        worst_patch_count (how many charts it was worst on).
     """
     def over_charts(values):
         v = np.asarray(values, float)
@@ -410,15 +455,40 @@ def results_entries(summary, decimals=2, matrix="pooled"):
 
 def measure_color(rounds, saturation_dn, output_dir, black_level=None, manual_clicks=None,
                   exposure="grays"):
-    """Run the color measurement over every round. Writes CSVs and figures to output_dir.
+    """Run the color measurement over every round; print, and write tables and figures.
 
-    rounds: {round name: folder}. black_level: DN to subtract (None = each file's
-    declared value). manual_clicks: {file name: four (x, y) corner-patch centers} for
-    charts the detector misses (see color_chart.homography_from_clicks). exposure: see
-    correct_chart. Also writes color_matrices.json (per-chart and pooled matrices per
-    round) and prints the gray-ratio diagnostic of the HW4 feedback.
-    Returns {round name: summary} for the rounds that had at least one usable chart;
-    each summary also has pooled_M and pooled_after (mean Delta E after the pooled matrix).
+    For each round: correct_chart on every capture (charts the detector misses or with
+    no usable mid gray are skipped with a message), summarize_round, the pooled matrix
+    (fit_pooled_matrix) and its Delta E, the per-patch table, and the neutral
+    diagnostics (ratios to white and flare). Written to output_dir:
+    color_dE_per_patch.csv (every patch of every chart), color_summary.csv (one row per
+    round), color_<round>_per_patch_table.csv, color_<round>_dE_before_after.png, and
+    color_matrices.json (per-chart and pooled matrices with row sums; the pooled one is
+    marked as the CCM).
+
+    Parameters
+    ----------
+    rounds : dict
+        {round name: folder of raw ColorChecker captures}.
+    saturation_dn : float
+        Saturation level in DN.
+    output_dir : str or Path
+        Folder for the tables and figures (created if needed).
+    black_level : float, optional
+        DN to subtract; None uses each file's declared value.
+    manual_clicks : dict, optional
+        {file name: four (x, y) corner-patch centers} for charts the detector misses
+        (see color_chart.homography_from_clicks).
+    exposure : {"grays", "white"}, default "grays"
+        See correct_chart; "white" reproduces HW4.
+
+    Returns
+    -------
+    dict
+        {round name: summary} for rounds with at least one usable chart. Each summary is
+        summarize_round's dict plus pooled_M (3 x 3), pooled_after and pooled_worst
+        (mean, std; pooled_after also sem), per_patch (pandas.DataFrame from
+        per_patch_table), neutrals (neutral_diagnostics) and flare (mean, white_residual).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -508,7 +578,27 @@ def measure_color(rounds, saturation_dn, output_dir, black_level=None, manual_cl
 
 
 def compare_with_hw4(rnd, entries, hw4_output="output/hw4"):
-    """Print how these entries compare with HW4's results file for the same round, if any."""
+    """Check that the datasheet entries reproduce HW4's results file for the same round.
+
+    A regression check: with exposure="white" the color step uses HW4's method, so its
+    entries should be identical to the ones hw4.py wrote. With the default six-gray
+    exposure they are expected to differ, and project1.py does not call this.
+
+    Parameters
+    ----------
+    rnd : str
+        Round name (e.g. "led").
+    entries : dict
+        The results.json color entries from results_entries.
+    hw4_output : str or Path, default "output/hw4"
+        Where hw4.py wrote its per-round results files.
+
+    Returns
+    -------
+    dict or None
+        {key: True if identical} for each entry, or None if the HW4 file does not exist.
+        Prints "identical" or which keys differ.
+    """
     import json
     path = Path(hw4_output) / rnd / f"10b_{rnd}_results_color.json"
     if not path.exists():
