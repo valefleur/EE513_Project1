@@ -17,9 +17,10 @@ CFA_CODES = {"RGGB": (0, 1, 1, 2), "BGGR": (2, 1, 1, 0), "GRBG": (1, 0, 2, 1), "
 
 def write_dng(path, cfa="BGGR", size=(64, 48), crop=(56, 40), photometric=32803,
               noise_profile=None, software="TestApp 1.0", lens_model=DEFAULT_LENS,
-              raw_data=None):
+              raw_data=None, exposure_s=None, iso=None):
     """Write a small DNG. lens_model=None leaves out the Exif IFD entirely.
-    raw_data: optional uint16 mosaic (height x width) to store instead of the ramp."""
+    raw_data: optional uint16 mosaic (height x width) to store instead of the ramp.
+    exposure_s, iso: optional ExposureTime and ISOSpeedRatings in the Exif IFD."""
     if raw_data is not None:
         size = (raw_data.shape[1], raw_data.shape[0])
     w, h = size
@@ -46,11 +47,11 @@ def write_dng(path, cfa="BGGR", size=(64, 48), crop=(56, 40), photometric=32803,
                 software=software, extratags=ifd0_tags)
         t.write(data, photometric=photometric, subfiletype=0, extratags=raw_tags)
     if lens_model is not None:
-        add_exif(path, lens_model)
+        add_exif(path, lens_model, exposure_s=exposure_s, iso=iso)
     return path
 
 
-def add_exif(path, lens_model, focal_mm=(6765, 1000), focal_35mm=24):
+def add_exif(path, lens_model, focal_mm=(6765, 1000), focal_35mm=24, exposure_s=None, iso=None):
     """Append an Exif IFD and a copy of IFD0 that points to it.
 
     IFD0 is rewritten at the end of the file with one more entry (ExifTag), and the
@@ -68,16 +69,26 @@ def add_exif(path, lens_model, focal_mm=(6765, 1000), focal_35mm=24):
         if len(data) % 2:
             data.extend(b"\0")
 
-    # Exif IFD: FocalLength (RATIONAL), FocalLengthIn35mmFilm (SHORT), LensModel (ASCII)
+    # Exif IFD, entries sorted by tag: ExposureTime (33434, RATIONAL), ISOSpeedRatings
+    # (34855, SHORT), FocalLength (37386, RATIONAL), FocalLengthIn35mmFilm (41989, SHORT),
+    # LensModel (42036, ASCII). Values longer than 4 bytes go after the IFD.
     word_align()
     exif_off = len(data)
     lens = lens_model.encode("ascii") + b"\0"
-    values_off = exif_off + 2 + 12 * 3 + 4
-    data += struct.pack("<H", 3)
-    data += struct.pack("<HHII", 37386, 5, 1, values_off)
-    data += struct.pack("<HHIHH", 41989, 3, 1, focal_35mm, 0)
-    data += struct.pack("<HHII", 42036, 2, len(lens), values_off + 8)
-    data += struct.pack("<I", 0) + struct.pack("<II", *focal_mm) + lens
+    n_entries = 3 + (exposure_s is not None) + (iso is not None)
+    values_off = exif_off + 2 + 12 * n_entries + 4
+    exif_entries, values = [], b""
+    if exposure_s is not None:
+        exif_entries.append(struct.pack("<HHII", 33434, 5, 1, values_off + len(values)))
+        values += struct.pack("<II", 1000000, int(round(1000000 / exposure_s)))
+    if iso is not None:
+        exif_entries.append(struct.pack("<HHIHH", 34855, 3, 1, int(iso), 0))
+    exif_entries.append(struct.pack("<HHII", 37386, 5, 1, values_off + len(values)))
+    values += struct.pack("<II", *focal_mm)
+    exif_entries.append(struct.pack("<HHIHH", 41989, 3, 1, focal_35mm, 0))
+    exif_entries.append(struct.pack("<HHII", 42036, 2, len(lens), values_off + len(values)))
+    values += lens
+    data += struct.pack("<H", n_entries) + b"".join(exif_entries) + struct.pack("<I", 0) + values
 
     # New IFD0: old entries plus ExifTag, sorted by tag number as TIFF requires
     entries.append(struct.pack("<HHII", 34665, 4, 1, exif_off))

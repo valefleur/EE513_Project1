@@ -15,6 +15,7 @@ from pathlib import Path
 
 import my_library.color_measurement as cm
 import my_library.geometry_measurement as gm
+import my_library.noise_measurement as nm
 import my_library.image_metadata as meta
 import my_library.results as res
 from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
@@ -22,6 +23,7 @@ from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 DEFAULT_IMAGES = Path("images/iPhone16/Lightroom")
 DEFAULT_OUTPUT = Path("output/project1")
 CALIBRATION_SUBDIR = "hw1/EXP125th"      # under --images; override with --calibration-images
+FLAT_FIELD_SUBDIR = "ISO64_Sunset"       # under --images; the HW3 ISO 64 pairs
 
 # Which illuminant round supplies the datasheet's color numbers.
 # --datasheet-illuminant overrides this; None writes no Delta E values.
@@ -44,6 +46,28 @@ def run_geometry(args):
     print(f"\nfocal_length_mm uses the EXIF-route pitch {exif['pitch_um']:.4f} um "
           f"(camera_specs.pitch_um {cam_spec.pitch_um} is kept for the homework scripts)")
     return entries
+
+
+def run_dynamic_range(args):
+    """Measurement 4: dynamic range from the photon transfer fit (measurement 3's data)."""
+    folder = args.flat_fields or args.images / FLAT_FIELD_SUBDIR
+    result = nm.measure_ptc(folder, args.white_level, args.black_level, args.ptc_cutoff)
+    summary = nm.report_dynamic_range(result)
+    if summary["table"]:
+        path = nm.write_dynamic_range_table(summary, args.output / "noise" / "dynamic_range_table.csv")
+        print(f"  table written to {path}")
+
+    # The noise keys must come from this same fit; flag it if results.json disagrees.
+    current, _ = res.load(args.results)
+    for key, value in (("conversion_gain_dn_per_e", summary["K"]), ("read_noise_e", summary["read_e"])):
+        held = current.get(key)
+        if held and held[0] and abs(held[0] - value) > 0.005 * abs(value):
+            print(f"  NOTE: results.json {key} = {held[0]} differs from this fit's {value:.4g}; "
+                  "the noise step should write both from the same fit")
+    if current.get("iso_of_noise_measurement") not in (None, result["iso"]):
+        print(f"  NOTE: results.json iso_of_noise_measurement is "
+              f"{current['iso_of_noise_measurement']}, these flat fields are ISO {result['iso']}")
+    return nm.results_entries(summary, args.ptc_cutoff)
 
 
 def run_color(args):
@@ -70,6 +94,7 @@ def run_color(args):
 # Order here is the order steps run in. Add geometry, mtf, noise, dynamic range here.
 MEASUREMENTS = {
     "geometry": run_geometry,
+    "dynamic_range": run_dynamic_range,
     "color": run_color,
 }
 
@@ -81,6 +106,8 @@ def build_parser():
     steps = p.add_argument_group("measurements (choose any; default is all)")
     steps.add_argument("--geometry", action="store_true",
                        help="checkerboard calibration: intrinsics, distortion, undistort figure")
+    steps.add_argument("--dynamic-range", action="store_true",
+                       help="dynamic range from the photon transfer fit of the flat-field pairs")
     steps.add_argument("--color", action="store_true",
                        help="ColorChecker: color correction matrix and Delta E before and after")
 
@@ -124,6 +151,14 @@ def build_parser():
     geo.add_argument("--size-from", choices=meta.SIZE_SOURCES, default="rawpy_visible",
                      help="which image size goes in raw_width_px/raw_height_px "
                           "(default: rawpy_visible)")
+
+    noise = p.add_argument_group("noise and dynamic range options")
+    noise.add_argument("--flat-fields", type=Path, metavar="PATH",
+                       help=f"flat-field pairs, consecutive by file name (default: "
+                            f"--images/{FLAT_FIELD_SUBDIR})")
+    noise.add_argument("--ptc-cutoff", type=float, default=nm.LOW_SIGNAL_CUTOFF, metavar="FRACTION",
+                       help=f"fit only pairs below this fraction of the saturation span "
+                            f"(default: {nm.LOW_SIGNAL_CUTOFF}, per HW3 feedback)")
 
     color = p.add_argument_group("color options")
     color.add_argument("--illuminant-rounds", nargs="+", choices=list(cm.COLOR_ROUNDS),

@@ -8,6 +8,7 @@ Run from the repository root:
     uv run pytest --calibration-images images/iPhone16/Lightroom/Checkerboard
     uv run pytest --calibration-images <folder> --calibration-exposure 1/125
     uv run pytest --sample-dng <one DNG from the camera>
+    uv run pytest --flat-fields images/iPhone16/Lightroom/ISO64_Sunset
 
 Without an option, its tests are skipped.
 
@@ -35,6 +36,8 @@ def pytest_addoption(parser):
                     help="only use calibration images at this exposure, e.g. 1/125")
     group.addoption("--sample-dng", type=Path, default=None,
                     help="one real DNG for the camera-identity tests")
+    group.addoption("--flat-fields", type=Path, default=None,
+                    help="folder of real flat-field pairs for the dynamic-range test")
 
 
 def _option_or_skip(request, name):
@@ -59,3 +62,8 @@ def real_calibration_exposure(request):
 @pytest.fixture
 def real_sample_dng(request):
     return _option_or_skip(request, "sample_dng")
+
+
+@pytest.fixture
+def real_flat_fields(request):
+    return _option_or_skip(request, "flat_fields")
