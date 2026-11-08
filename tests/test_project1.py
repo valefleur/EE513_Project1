@@ -87,7 +87,7 @@ def test_noise_and_dynamic_range_share_one_fit(monkeypatch):
 def test_geometry_option_defaults():
     args = parse([])
     assert args.corner_detector == "sb" and not args.free_k3
-    assert args.square_mm == pytest.approx(20.01) and args.square_mm_sd is None
+    assert args.square_mm == pytest.approx(20.00) and args.square_mm_sd == pytest.approx(0.04)
     assert args.size_from == "rawpy_visible" and args.calibration_images is None
 
 

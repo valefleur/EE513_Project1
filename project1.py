@@ -23,6 +23,10 @@ from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
 DEFAULT_IMAGES = Path("images/iPhone16/Lightroom")
 DEFAULT_OUTPUT = Path("output/project1")
+# Measured checkerboard square (Sat Nov 7 reprint): 9-square horizontal runs 180.2, 180.1,
+# 180.3 mm and 7-square vertical runs 140.0, 139.5 mm give 20.022, 20.011, 20.033, 20.000,
+# 19.929 mm per square: mean 20.00, sample sd 0.04 mm (about the ruler's +/-0.35 mm / n).
+SQUARE_MM, SQUARE_MM_SD = 20.00, 0.04
 # Every input folder must come from this camera (LensModel in the DNG). The lens_id
 # assertion inside each step only checks that a series agrees with itself; this checks
 # it is the camera the datasheet describes. --expected-lens overrides ("any" disables).
@@ -197,10 +201,10 @@ def build_parser():
     geo.add_argument("--free-k3", action="store_true",
                      help="also fit k3 (default holds it at zero, per HW2 feedback: a free k3 "
                           "trades off against k2 and destabilizes the fit)")
-    geo.add_argument("--square-mm", type=float, default=gm.analyze.SQUARE_MM, metavar="MM",
-                     help=f"measured checkerboard square size (default: {gm.analyze.SQUARE_MM})")
-    geo.add_argument("--square-mm-sd", type=float, metavar="MM",
-                     help="uncertainty of --square-mm (default: none yet)")
+    geo.add_argument("--square-mm", type=float, default=SQUARE_MM, metavar="MM",
+                     help=f"measured checkerboard square size (default: {SQUARE_MM})")
+    geo.add_argument("--square-mm-sd", type=float, default=SQUARE_MM_SD, metavar="MM",
+                     help=f"uncertainty of --square-mm (default: {SQUARE_MM_SD})")
     geo.add_argument("--undistort-file", metavar="FILE",
                      help="view for the undistort figure (default: the one reaching "
                           "farthest from the frame center)")
