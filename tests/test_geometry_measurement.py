@@ -310,3 +310,39 @@ def test_corner_overlay_is_saved_for_found_and_missing_grids(tmp_path):
     import cv2
     assert cv2.imread(str(a)).shape[:2] == (size[1] // 4, size[0] // 4)
     assert b.exists()
+
+
+
+def test_binning_check_on_the_main_camera_numbers():
+    """EXIF-route pitch 2.420 um on a 4032 x 3024 frame vs a 48 MP, 1.22 um sensor:
+    pitch ratio 1.98, pixel ratio 3.94: binned. The ultra-wide's 1.361 um would not be."""
+    main = gm.binning_check(2.420, (4032, 3024))
+    assert main["binned"] and main["consistent"]
+    assert main["pitch_ratio"] == pytest.approx(2.420 / 1.22) and main["pixel_ratio"] == pytest.approx(48e6 / (4032 * 3024))
+    wide = gm.binning_check(1.361, (4032, 3024))
+    assert not wide["binned"] and not wide["consistent"]
+
+
+def test_rms_jackknife_matches_the_actual_scatter_of_the_rms():
+    """Repeat a simulated calibration with fresh corner noise: the RMS scatters by some
+    amount; the jackknife from a single calibration should estimate it (within a factor
+    of about 2, given only 20 repeats and one jackknife each)."""
+    rms, jk = [], []
+    for seed in range(20):
+        obj, img, size, *_ = synthetic_views(n=12, noise_px=0.2, seed=100 + seed)
+        cal = gm.calibrate(obj, img, size)
+        rms.append(cal["rms"])
+        if seed < 5:
+            jk.append(gm.rms_jackknife(obj, img, size)[0])
+    actual = np.std(rms, ddof=1)
+    assert 0.5 * actual < np.median(jk) < 2.0 * actual
+
+
+def test_results_entries_carry_rms_uncertainty_and_binning():
+    obj, img, size, *_ = synthetic_views(n=12)
+    cal = gm.calibrate(obj, img, size)
+    e = gm.results_entries(cal, 12, 2.42, 0.012, 20.0, 0.04, rms_sd=0.01, binned=True)
+    assert e["reprojection_rms_px"][1] == 0.01 and e["binned_from_higher_resolution_sensor"] is True
+    results, template = res.load()
+    results.update(e)
+    assert res.validate(results, template) == []

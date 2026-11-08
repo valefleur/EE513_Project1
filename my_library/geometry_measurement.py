@@ -63,6 +63,10 @@ DISTORTION_FLAG_PERCENT = 5.0
 #   9to5Mac, "Main lens sensor: 2.44 um quad pixel":
 #     https://9to5mac.com/iphone-16-pro-vs-13-pro/
 PUBLISHED_PITCH_UM = 2.44
+# The same sources give the 48 MP sensor's photodiode pitch as 1.22 um ("1.22um-2.44um"):
+# 2 x 2 binning makes each 12 MP output pixel two photodiodes wide.
+PUBLISHED_PHOTODIODE_UM = 1.22
+SENSOR_MEGAPIXELS = 48.0
 # Full-frame (35 mm film) image area, 36 x 24 mm; "35 mm" is the width of the film strip
 # including sprocket holes. Its diagonal, hypot(36, 24) = 43.27 mm, is the reference for
 # the 35 mm-equivalent focal length (Prof. McNames, 02_projection_and_intrinsics.ipynb,
@@ -346,18 +350,88 @@ def focal_mm_with_uncertainty(cal, pitch_um, pitch_rel_sd):
     return f, f * np.hypot(s_px / f_px, pitch_rel_sd)
 
 
+def binning_check(pitch_um, frame_size, photodiode_um=PUBLISHED_PHOTODIODE_UM,
+                  sensor_mp=SENSOR_MEGAPIXELS, tolerance=0.1):
+    """Is this a 2 x 2 binned image from a higher-resolution sensor? Two independent tests.
+
+    The math. Binning combines a 2 x 2 group of photodiodes into one output pixel, so
+    (1) the output pixel pitch is twice the photodiode pitch, and (2) the output has a
+    quarter of the sensor's pixels. Test 1 uses the EXIF-route pitch (measured from this
+    file's own focal lengths and frame size) against the published photodiode pitch;
+    test 2 uses the frame's pixel count against the published sensor resolution. Both
+    must agree within `tolerance` (relative). The published values are for the main
+    camera (GSMArena: 48 MP, 1.22 um photodiodes), so the check only applies to it.
+
+    Parameters
+    ----------
+    pitch_um : float
+        Output pixel pitch from the EXIF route (exif_geometry).
+    frame_size : (width, height)
+        The raw frame's size in pixels.
+    photodiode_um : float, default PUBLISHED_PHOTODIODE_UM
+    sensor_mp : float, default SENSOR_MEGAPIXELS
+    tolerance : float, default 0.1
+
+    Returns
+    -------
+    dict
+        pitch_ratio (output pitch / photodiode pitch, 2 if binned), pixel_ratio (sensor
+        pixels / output pixels, 4 if binned), binned (both within tolerance), and
+        consistent (both tests give the same answer).
+    """
+    pitch_ratio = pitch_um / photodiode_um
+    pixel_ratio = sensor_mp * 1e6 / (frame_size[0] * frame_size[1])
+    by_pitch = abs(pitch_ratio / 2 - 1) < tolerance
+    by_pixels = abs(pixel_ratio / 4 - 1) < tolerance
+    return dict(pitch_ratio=float(pitch_ratio), pixel_ratio=float(pixel_ratio),
+                binned=bool(by_pitch and by_pixels), consistent=bool(by_pitch == by_pixels))
+
+
+def rms_jackknife(obj_points, img_points, image_size, fix_k3=True):
+    """Uncertainty of the RMS reprojection error by leaving one view out at a time.
+
+    The math. OpenCV reports the RMS but no uncertainty for it. The jackknife asks how
+    much the result depends on which views happened to be shot: recalibrate n times,
+    each time without one view, giving RMS_i; with mean RMS_bar, the jackknife standard
+    error is
+        sd = sqrt( (n - 1) / n * sum_i (RMS_i - RMS_bar)^2 ).
+    The (n - 1) / n factor (instead of 1 / (n - 1)) accounts for the n leave-one-out
+    results sharing all but one view each, so they scatter far less than independent
+    repeats would. Checked against the actual scatter of the RMS over repeated simulated
+    calibrations in tests/test_geometry_measurement.py.
+
+    Parameters
+    ----------
+    obj_points, img_points : lists
+        As passed to calibrate (one entry per view).
+    image_size : (width, height)
+    fix_k3 : bool, default True
+        As in calibrate.
+
+    Returns
+    -------
+    (sd, rms_i) : tuple
+        The jackknife standard error (px) and the n leave-one-out RMS values.
+    """
+    n = len(img_points)
+    rms_i = np.array([calibrate([o for k, o in enumerate(obj_points) if k != i],
+                                [p for k, p in enumerate(img_points) if k != i],
+                                image_size, fix_k3=fix_k3)["rms"] for i in range(n)])
+    return float(np.sqrt((n - 1) / n * np.sum((rms_i - rms_i.mean()) ** 2))), rms_i
+
+
 def results_entries(cal, n_used, pitch_um, pitch_rel_sd, square_mm, square_mm_sd=None,
-                    decimals=4):
+                    decimals=4, rms_sd=None, binned=None):
     """The geometry keys of results.json.
 
     focal_length_px is the mean of f_x and f_y (see mean_focal_px). focal_length_mm
-    uses the EXIF-route pixel pitch and its rounding uncertainty. The RMS has no
-    uncertainty yet (method still open), so it is [value, null] and stays on the
-    todo list.
+    uses the EXIF-route pixel pitch and its rounding uncertainty. The RMS uncertainty is
+    the jackknife standard error over views (rms_jackknife), if given. binned is the
+    binning_check verdict, if given.
     """
     p = cal["params"]
     pair = lambda v, s=None: [round(float(v), decimals), None if s is None else round(float(s), decimals)]
-    return {
+    out = {
         "focal_length_px": pair(*mean_focal_px(cal)),
         "focal_length_mm": pair(*focal_mm_with_uncertainty(cal, pitch_um, pitch_rel_sd)),
         "principal_point_x_px": pair(*p["cx"]),
@@ -366,10 +440,13 @@ def results_entries(cal, n_used, pitch_um, pitch_rel_sd, square_mm, square_mm_sd
         "distortion_k2": pair(*p["k2"]),
         "distortion_p1": pair(*p["p1"]),
         "distortion_p2": pair(*p["p2"]),
-        "reprojection_rms_px": pair(cal["rms"]),
+        "reprojection_rms_px": pair(cal["rms"], rms_sd),
         "n_calibration_images_used": int(n_used),
         "checkerboard_square_mm_measured": pair(square_mm, square_mm_sd),
     }
+    if binned is not None:
+        out["binned_from_higher_resolution_sensor"] = bool(binned)
+    return out
 
 
 # ----------------------------------------------------------------- figures
@@ -520,8 +597,9 @@ def measure_geometry(folder, output_dir, square_mm, exposure=None, exclude=(),
                      detector="sb", fix_k3=True, undistort_file=None):
     """Calibrate from every usable capture in folder. Writes figures, a per-view CSV,
     calibration.json, and a corner overlay for every capture (corners/<file>.png,
-    including the ones with no full grid) to output_dir. Returns a summary dict (see
-    results_entries)."""
+    including the ones with no full grid) to output_dir. Also computes the RMS's
+    jackknife uncertainty (rms_jackknife) and the binning check (binning_check).
+    Returns a summary dict (see results_entries)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     table = select_files(folder, exposure, exclude)
@@ -649,5 +727,14 @@ def measure_geometry(folder, output_dir, square_mm, exposure=None, exclude=(),
         params=p, fix_k3=fix_k3, detector=detector, square_mm=square_mm,
         implied_distortion_percent=dict(at_outermost_corner=float(d_data), at_frame_corner=float(d_corner)),
         exposure_s=exposure, files=views["file"].tolist()), indent=2) + "\n")
+    rms_sd, rms_i = rms_jackknife(obj, img, size, fix_k3=fix_k3)
+    print(f"\nRMS reprojection error {cal['rms']:.4f} +/- {rms_sd:.4f} px (jackknife over {len(img)} views; "
+          f"leave-one-out RMS {rms_i.min():.4f} to {rms_i.max():.4f})")
+    binning = binning_check(exif["pitch_um"], size)
+    print(f"Binning check: output pitch / photodiode pitch = {binning['pitch_ratio']:.2f} (2 if 2x2 binned), "
+          f"sensor pixels / output pixels = {binning['pixel_ratio']:.2f} (4 if binned) -> "
+          f"{'binned' if binning['binned'] else 'NOT binned'}"
+          + ("" if binning["consistent"] else "  WARNING: the two tests disagree (a different camera?)"))
     return dict(cal=cal, n_used=len(img), ident=ident, views=views, exif=exif,
-                distortion_percent=(float(d_data), float(d_corner)), straightness=straight)
+                distortion_percent=(float(d_data), float(d_corner)), straightness=straight,
+                rms_sd=rms_sd, binning=binning)

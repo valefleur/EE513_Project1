@@ -54,7 +54,8 @@ def run_geometry(args):
         undistort_file=args.undistort_file)
     exif = summary["exif"]
     entries = gm.results_entries(summary["cal"], summary["n_used"], exif["pitch_um"],
-                                 exif["pitch_rel_sd"], args.square_mm, args.square_mm_sd)
+                                 exif["pitch_rel_sd"], args.square_mm, args.square_mm_sd,
+                                 rms_sd=summary["rms_sd"], binned=summary["binning"]["binned"])
     entries.update(meta.identity_results_entries(summary["ident"], size_from=args.size_from))
     print(f"\nfocal_length_mm uses the EXIF-route pitch {exif['pitch_um']:.4f} um "
           f"(camera_specs.pitch_um {cam_spec.pitch_um} is kept for the homework scripts)")
@@ -208,6 +209,7 @@ def build_parser():
     geo.add_argument("--undistort-file", metavar="FILE",
                      help="view for the undistort figure (default: the one reaching "
                           "farthest from the frame center)")
+    # rawpy_visible throughout (plan Q17); see the note at meta.SIZE_SOURCES.
     geo.add_argument("--size-from", choices=meta.SIZE_SOURCES, default="rawpy_visible",
                      help="which image size goes in raw_width_px/raw_height_px "
                           "(default: rawpy_visible)")

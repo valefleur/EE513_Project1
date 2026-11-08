@@ -181,6 +181,10 @@ _RAW_TAGS = (TAG_NEW_SUBFILE_TYPE, TAG_IMAGE_WIDTH, TAG_IMAGE_LENGTH, TAG_PHOTOM
              TAG_MAKE, TAG_MODEL, TAG_SOFTWARE, TAG_CFA_REPEAT_DIM, TAG_CFA_PATTERN,
              TAG_CFA_PLANE_COLOR, TAG_DEFAULT_CROP_ORIGIN, TAG_DEFAULT_CROP_SIZE,
              TAG_ACTIVE_AREA)
+# rawpy_visible is used consistently (it is the array every measurement works on). On the
+# iPhone 16 Pro Max main camera it equals DefaultCropSize (4032 x 3024). If this is ever
+# revisited with a different camera, consider DefaultCropSize, which the professor's
+# geometry_from_exif prefers; the raw IFD size can include masked border pixels.
 SIZE_SOURCES = ("rawpy_visible", "default_crop", "raw_ifd")
 
 
@@ -313,8 +317,9 @@ def identity_results_entries(ident, size_from="rawpy_visible"):
     """The camera-description keys of results.json, from camera_identity().
 
     size_from picks which size goes in raw_width_px / raw_height_px; see
-    SIZE_SOURCES. capture_app is not included: the Software tag may name the OS or
-    the app, so check ident["software"] and set that key deliberately.
+    SIZE_SOURCES. capture_app is the DNG Software tag (e.g. "Adobe Lightroom 11.6.21
+    (iOS)"): this project treats the camera as the hardware and software that capture
+    the scene as a file, so the app and its version are part of it.
     """
     if size_from not in SIZE_SOURCES:
         raise ValueError(f"size_from must be one of {SIZE_SOURCES}")
@@ -323,8 +328,11 @@ def identity_results_entries(ident, size_from="rawpy_visible"):
         raise ValueError(f"this file has no {size_from} size")
     if ident["lens_model"] is None:
         raise ValueError(f"{ident['file']}: no LensModel in the Exif IFD")
-    return {"camera": ident["lens_model"], "cfa_pattern": ident["cfa_pattern"],
-            "raw_width_px": size[0], "raw_height_px": size[1]}
+    out = {"camera": ident["lens_model"], "cfa_pattern": ident["cfa_pattern"],
+           "raw_width_px": size[0], "raw_height_px": size[1]}
+    if ident.get("software"):
+        out["capture_app"] = ident["software"]
+    return out
 
 
 def _to_float(value):
@@ -340,14 +348,16 @@ def _to_float(value):
 def get_optical_center(path):
     """
     For now, return the geometric center of the image as (x, y) in subpixels (float).
+    Pixel-center convention (as in geometry_measurement.frame_center): pixel (i, j) is
+    centered at x = j, y = i, so a w x h image's center is ((w - 1) / 2, (h - 1) / 2).
     TODO Find an image whose EXIF data includes any data related to the optical
     center instead of the geometric center and add a try-catch block to attempt
     to return that data first.
     """
     with rawpy.imread(str(path)) as raw:
         shape = tuple(raw.raw_image_visible.shape)
-        center_x = shape[1] / 2.0
-        center_y = shape[0] / 2.0
+        center_x = (shape[1] - 1) / 2.0
+        center_y = (shape[0] - 1) / 2.0
     return center_x, center_y
 
 

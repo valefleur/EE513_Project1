@@ -72,6 +72,7 @@ def test_results_entries_size_source(tmp_path):
     from tests.synthetic_dng import DEFAULT_LENS
     ident = meta.camera_identity(write_dng(tmp_path / "a.dng", crop=(56, 40)))
     e = meta.identity_results_entries(ident, size_from="default_crop")
+    assert e.pop("capture_app") == "TestApp 1.0"                      # the Software tag
     assert e == {"camera": DEFAULT_LENS, "cfa_pattern": "BGGR",
                  "raw_width_px": 56, "raw_height_px": 40}
     with pytest.raises(ValueError):
