@@ -214,6 +214,8 @@ def test_measure_geometry_end_to_end_on_synthetic_dngs(tmp_path, capsys):
     for name in ("calibration.json", "geometry_per_view.csv",
                  "geometry_residuals.png", "geometry_undistort.png"):
         assert (tmp_path / "out" / name).exists()
+    overlays = sorted((tmp_path / "out" / "corners").glob("*.png"))
+    assert len(overlays) == 10                                  # one per capture
     saved = json.loads((tmp_path / "out" / "calibration.json").read_text())
     assert saved["K"][0][0] == pytest.approx(fx)
 
@@ -296,3 +298,15 @@ def test_rough_pass_corners_map_back_onto_the_full_resolution_corners(tmp_path):
     assert nearest.mean() < 0.5
     _, info = gm.raw_gray(path)
     assert info["rough_pass"] == "green phase at tile row 0, column 1"
+
+
+
+def test_corner_overlay_is_saved_for_found_and_missing_grids(tmp_path):
+    _, img, size, K, _, poses = small_session(n=1)
+    gray = render_view(K, *poses[0], size)
+    found = gm.detect_corners(gray)
+    a = gm.save_corner_overlay(gray, found, tmp_path / "found.png", "found")
+    b = gm.save_corner_overlay(np.full_like(gray, 128), None, tmp_path / "none.png", "no grid")
+    import cv2
+    assert cv2.imread(str(a)).shape[:2] == (size[1] // 4, size[0] // 4)
+    assert b.exists()

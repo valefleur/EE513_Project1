@@ -23,6 +23,7 @@ def fake_steps(monkeypatch):
             return FAKE_ENTRIES.get(name, {})
         return step
     monkeypatch.setattr(project1, "MEASUREMENTS", {name: make(name) for name in project1.MEASUREMENTS})
+    monkeypatch.setattr(project1, "check_expected_camera", lambda args: None)   # no real images in unit tests
     return calls
 
 
@@ -141,3 +142,39 @@ def test_percent_complete_is_printed(tmp_path, fake_steps, capsys):
     project1.main(["--results", str(tmp_path / "r.json")])
     import re
     assert re.search(r"\d+ of \d+ entries complete \(\d+%\)", capsys.readouterr().out)
+
+
+
+# ------------------------------------------------ the expected-camera guard
+
+def _guard_args(tmp_path, *extra):
+    from tests.synthetic_dng import write_dng
+    folder = tmp_path / "checkerboard"
+    folder.mkdir(parents=True)
+    write_dng(folder / "IMG_0.dng")                      # LensModel: tests.synthetic_dng.DEFAULT_LENS
+    args = parse(["--geometry", "--calibration-images", str(folder), *extra])
+    args.steps = project1.selected_steps(args)
+    return args
+
+
+def test_guard_stops_on_a_different_camera(tmp_path):
+    args = _guard_args(tmp_path)                         # expects the iPhone main camera
+    with pytest.raises(SystemExit, match="different camera"):
+        project1.check_expected_camera(args)
+
+
+def test_guard_passes_the_expected_camera_and_can_be_disabled(tmp_path):
+    from tests.synthetic_dng import DEFAULT_LENS
+    project1.check_expected_camera(_guard_args(tmp_path, "--expected-lens", DEFAULT_LENS))
+    project1.check_expected_camera(_guard_args(tmp_path / "x", "--expected-lens", "any"))
+
+
+def test_guard_runs_before_anything_is_written(tmp_path):
+    out = tmp_path / "results.json"
+    folder = tmp_path / "cb"
+    folder.mkdir()
+    from tests.synthetic_dng import write_dng
+    write_dng(folder / "IMG_0.dng")
+    with pytest.raises(SystemExit):
+        project1.main(["--geometry", "--calibration-images", str(folder), "--results", str(out)])
+    assert not out.exists()

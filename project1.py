@@ -23,6 +23,10 @@ from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
 DEFAULT_IMAGES = Path("images/iPhone16/Lightroom")
 DEFAULT_OUTPUT = Path("output/project1")
+# Every input folder must come from this camera (LensModel in the DNG). The lens_id
+# assertion inside each step only checks that a series agrees with itself; this checks
+# it is the camera the datasheet describes. --expected-lens overrides ("any" disables).
+EXPECTED_LENS = "iPhone 16 Pro Max back camera 6.765mm f/1.78"
 CALIBRATION_SUBDIR = "hw1/EXP125th"      # under --images; override with --calibration-images
 FLAT_FIELD_SUBDIR = "ISO64_Sunset"       # under --images; the HW3 ISO 64 pairs
 DARK_SUBDIR = "ISO64_Dark"               # under --images; the HW3 lens-capped frames
@@ -167,6 +171,8 @@ def build_parser():
                    help=f"folder for figures and tables (default: {DEFAULT_OUTPUT})")
     p.add_argument("--results", type=Path, default=res.RESULTS,
                    help="results.json to update (default: the repository's results.json)")
+    p.add_argument("--expected-lens", default=EXPECTED_LENS, metavar="LENSMODEL",
+                   help=f"LensModel every input must have (default: {EXPECTED_LENS!r}; 'any' disables)")
     p.add_argument("--no-results", action="store_true",
                    help="compute and print, but do not write results.json")
 
@@ -265,6 +271,50 @@ def resolve_datasheet_illuminant(parser, args):
               "this run, so no Delta E values will be written to results.json")
 
 
+def step_folders(args):
+    """{step name: list of input folders} for the selected steps, as the steps resolve them."""
+    images = args.images
+    folders = {
+        "geometry": [args.calibration_images or images / CALIBRATION_SUBDIR],
+        "mtf": [args.slanted_edges or images / SLANTED_SUBDIR],
+        "noise": [args.flat_fields or images / FLAT_FIELD_SUBDIR, args.dark_frames or images / DARK_SUBDIR],
+        "dynamic_range": [args.flat_fields or images / FLAT_FIELD_SUBDIR],
+        "color": [images / cm.COLOR_ROUNDS[r] for r in (args.illuminant_rounds or cm.COLOR_ROUNDS)],
+    }
+    return {name: folders[name] for name in args.steps if name in folders}
+
+
+def check_expected_camera(args):
+    """Stop before any step runs if an input folder came from another camera.
+
+    Reads the LensModel of the first raw file in every input folder (and every series
+    subfolder) of the selected steps. Each step's own lens_id assertion confirms its
+    files agree with each other; this confirms they are the camera the datasheet
+    describes. (On Sat Nov 7 a checkerboard set from the ultra-wide passed every
+    per-series check and wrote its geometry into results.json.)
+    """
+    if args.expected_lens.lower() == "any":
+        return
+    wrong = []
+    for step, folders in step_folders(args).items():
+        for folder in folders:
+            folder = Path(folder)
+            if not folder.is_dir():
+                continue
+            subdirs = [d for d in sorted(folder.iterdir()) if d.is_dir()] or [folder]
+            for d in [folder] + subdirs:
+                files = [p for p in sorted(d.iterdir()) if p.is_file() and p.suffix.lower() in meta.RAW_SUFFIXES]
+                if files:
+                    lens = meta.camera_identity(files[0])["lens_model"]
+                    if lens != args.expected_lens:
+                        wrong.append(f"  {step}: {d} ({files[0].name}) is {lens!r}")
+    if wrong:
+        raise SystemExit("Input from a different camera than EXPECTED_LENS "
+                         f"({args.expected_lens!r}):\n" + "\n".join(wrong)
+                         + "\nNothing was written. Use --expected-lens to measure that camera on purpose "
+                           "(with its own --results and --output), or fix the folder.")
+
+
 def selected_steps(args):
     """The steps named on the command line, or all of them if none were."""
     chosen = [name for name in MEASUREMENTS if getattr(args, name)]
@@ -281,6 +331,7 @@ def main(argv=None):
     entries = {"black_level_dn": res.pair(args.black_level),
                "white_level_dn": int(args.white_level)}
     args.steps = selected_steps(args)
+    check_expected_camera(args)
     for name in args.steps:
         print(f"\n=================== {name} ===================")
         entries.update(MEASUREMENTS[name](args))

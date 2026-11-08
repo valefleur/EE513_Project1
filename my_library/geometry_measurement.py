@@ -440,12 +440,60 @@ def plot_undistort(path, cal, corners, out_png, alpha=1.0):
 
 # ----------------------------------------------------------------- the measurement
 
-def _detect_in_file(path, detector):
+def save_corner_overlay(gray, corners, out_png, label, scale=0.25):
+    """Save a downscaled copy of the capture with the detected corners drawn on it.
+
+    A mid-calculation sanity check: cv.drawChessboardCorners draws the corners in their
+    detected order (colored row by row, joined by a line), so a misplaced corner, a
+    flipped grid or a detection on the wrong object is visible at a glance. When no
+    full grid was found, the frame is saved with that label so the cause (board off the
+    frame edge, glare, blur) can be seen.
+
+    Parameters
+    ----------
+    gray : ndarray
+        8-bit grayscale capture (raw_gray), full resolution.
+    corners : ndarray or None
+        Detected corners (N x 1 x 2, full-resolution pixels), or None.
+    out_png : str or Path
+        Where to save the image.
+    label : str
+        Text drawn in the top-left corner (e.g. file name and status).
+    scale : float, default 0.25
+        Output size relative to the capture.
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    bgr = cv.cvtColor(gray, cv.COLOR_GRAY2BGR)
+    if corners is not None:
+        thickness = max(2, int(round(2 / scale)))
+        cv.drawChessboardCorners(bgr, PATTERN_SIZE, corners.astype(np.float32), True)
+        for x, y in corners.reshape(-1, 2):            # thicker markers survive downscaling
+            cv.circle(bgr, (int(round(x)), int(round(y))), thickness * 3, (0, 255, 255), thickness)
+    small = cv.resize(bgr, None, fx=scale, fy=scale, interpolation=cv.INTER_AREA)
+    color = (40, 200, 40) if corners is not None else (40, 40, 230)
+    cv.putText(small, label, (12, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv.LINE_AA)
+    cv.putText(small, label, (12, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv.LINE_AA)
+    out_png = Path(out_png)
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    cv.imwrite(str(out_png), small)
+    return out_png
+
+
+def _detect_in_file(path, detector, overlay_dir=None):
     """Read one capture's raw mosaic, find the board, and return only small results;
-    the image goes out of scope when this function returns."""
+    the image goes out of scope when this function returns. With overlay_dir, also
+    save the corner overlay (save_corner_overlay) as <overlay_dir>/<file stem>.png."""
     gray, info = raw_gray(path)
     size = gray.shape[::-1]
     corners = detect_corners(gray, detector=detector)
+    if overlay_dir is not None:
+        status = f"{len(corners)} corners" if corners is not None else f"NO full {PATTERN_SIZE} grid"
+        save_corner_overlay(gray, corners, Path(overlay_dir) / f"{Path(path).stem}.png",
+                            f"{Path(path).name}: {status}")
     out = dict(size=size, corners=corners, transition_px=None, black=None, white=None,
                max_radius_px=None, gain_source=info["gain_source"])
     if corners is not None:
@@ -470,8 +518,10 @@ def select_files(folder, exposure=None, exclude=()):
 
 def measure_geometry(folder, output_dir, square_mm, exposure=None, exclude=(),
                      detector="sb", fix_k3=True, undistort_file=None):
-    """Calibrate from every usable capture in folder. Writes figures, a per-view CSV and
-    calibration.json to output_dir. Returns a summary dict (see results_entries)."""
+    """Calibrate from every usable capture in folder. Writes figures, a per-view CSV,
+    calibration.json, and a corner overlay for every capture (corners/<file>.png,
+    including the ones with no full grid) to output_dir. Returns a summary dict (see
+    results_entries)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     table = select_files(folder, exposure, exclude)
@@ -487,7 +537,7 @@ def measure_geometry(folder, output_dir, square_mm, exposure=None, exclude=(),
     objp = board_object_points(square_mm)
     obj, img, kept, sizes, frames = [], [], [], set(), {}
     for row in table.itertuples():
-        view = _detect_in_file(row.path, detector)       # the image is closed inside
+        view = _detect_in_file(row.path, detector, overlay_dir=output_dir / "corners")
         sizes.add(view["size"])
         if view["corners"] is None:
             print(f"  no full {PATTERN_SIZE} grid in {row.file}; not used")
