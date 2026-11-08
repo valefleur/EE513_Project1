@@ -57,6 +57,17 @@ def test_color_exposure_defaults_to_six_grays():
     assert parse(["--color-exposure", "white"]).color_exposure == "white"
 
 
+def test_mtf_flag_and_defaults():
+    assert project1.selected_steps(parse(["--mtf"])) == ["mtf"]
+    args = parse([])
+    assert args.slanted_edges is None and args.mtf_center_series is None
+    assert args.mtf_datasheet_series == project1.MTF_DATASHEET_SERIES          # one command, no flags
+    assert args.mtf_two_distance == list(project1.MTF_TWO_DISTANCE)
+    args = parse(["--mtf-datasheet-series", "*_501mm", "--mtf-two-distance", "center_250mm", "center_501mm"])
+    assert args.mtf_datasheet_series == "*_501mm"
+    assert args.mtf_two_distance == ["center_250mm", "center_501mm"]
+
+
 def test_noise_flag_and_defaults():
     assert project1.selected_steps(parse(["--noise"])) == ["noise"]
     assert project1.selected_steps(parse(["--dynamic-range", "--noise"])) == ["noise", "dynamic_range"]
@@ -123,7 +134,7 @@ def test_no_results_leaves_file_untouched(tmp_path, fake_steps):
 def test_no_flags_runs_every_step_once_in_order(tmp_path, fake_steps):
     project1.main(["--results", str(tmp_path / "r.json"), "--no-results"])
     assert [name for name, _ in fake_steps] == list(project1.MEASUREMENTS)
-    assert list(project1.MEASUREMENTS) == ["geometry", "noise", "dynamic_range", "color"]
+    assert list(project1.MEASUREMENTS) == ["geometry", "mtf", "noise", "dynamic_range", "color"]
 
 
 def test_percent_complete_is_printed(tmp_path, fake_steps, capsys):

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import my_library.color_measurement as cm
 import my_library.geometry_measurement as gm
+import my_library.mtf_measurement as mtf
 import my_library.noise_measurement as nm
 import my_library.image_metadata as meta
 import my_library.results as res
@@ -25,6 +26,9 @@ DEFAULT_OUTPUT = Path("output/project1")
 CALIBRATION_SUBDIR = "hw1/EXP125th"      # under --images; override with --calibration-images
 FLAT_FIELD_SUBDIR = "ISO64_Sunset"       # under --images; the HW3 ISO 64 pairs
 DARK_SUBDIR = "ISO64_Dark"               # under --images; the HW3 lens-capped frames
+SLANTED_SUBDIR = "hw2_slanted/Nov_07"    # under --images; one subfolder per series (target position)
+MTF_DATASHEET_SERIES = "*_501mm"         # datasheet center and corners from one distance (print-limited at 250 mm)
+MTF_TWO_DISTANCE = ("center_250mm", "center_501mm")   # print-vs-camera test; skipped if either is missing
 
 # Which illuminant round supplies the datasheet's color numbers.
 # --datasheet-illuminant overrides this; None writes no Delta E values.
@@ -47,6 +51,15 @@ def run_geometry(args):
     print(f"\nfocal_length_mm uses the EXIF-route pitch {exif['pitch_um']:.4f} um "
           f"(camera_specs.pitch_um {cam_spec.pitch_um} is kept for the homework scripts)")
     return entries
+
+
+def run_mtf(args):
+    """Measurement 2: slanted-edge MTF50 at the center and the four corners."""
+    folder = args.slanted_edges or args.images / SLANTED_SUBDIR
+    out = mtf.measure_mtf(folder, args.output / "mtf", center_series=args.mtf_center_series,
+                          datasheet_pattern=args.mtf_datasheet_series,
+                          two_distance_pair=args.mtf_two_distance)
+    return mtf.results_entries(out["values"])
 
 
 def photon_transfer(args):
@@ -124,6 +137,7 @@ def run_color(args):
 # Order here is the order steps run in. Add geometry, mtf, noise, dynamic range here.
 MEASUREMENTS = {
     "geometry": run_geometry,
+    "mtf": run_mtf,
     "noise": run_noise,
     "dynamic_range": run_dynamic_range,
     "color": run_color,
@@ -137,6 +151,8 @@ def build_parser():
     steps = p.add_argument_group("measurements (choose any; default is all)")
     steps.add_argument("--geometry", action="store_true",
                        help="checkerboard calibration: intrinsics, distortion, undistort figure")
+    steps.add_argument("--mtf", action="store_true",
+                       help="slanted-edge MTF50: center and four corners, both edge directions")
     steps.add_argument("--noise", action="store_true",
                        help="noise: gain, read noise, SNR and knee, single-frame bias, "
                             "NoiseProfile, dark current")
@@ -185,6 +201,21 @@ def build_parser():
     geo.add_argument("--size-from", choices=meta.SIZE_SOURCES, default="rawpy_visible",
                      help="which image size goes in raw_width_px/raw_height_px "
                           "(default: rawpy_visible)")
+
+    mtf_opts = p.add_argument_group("MTF options")
+    mtf_opts.add_argument("--slanted-edges", type=Path, metavar="PATH",
+                     help=f"slanted-edge captures, one subfolder per series (default: --images/{SLANTED_SUBDIR})")
+    mtf_opts.add_argument("--mtf-center-series", metavar="NAME",
+                     help="series for the center value (default: among the datasheet series, the "
+                          "only one, or the only one whose name contains 'center')")
+    mtf_opts.add_argument("--mtf-datasheet-series", metavar="PATTERN", default=MTF_DATASHEET_SERIES,
+                          help="glob pattern of the series that supply the datasheet values, to keep "
+                               f"center and corners at one distance (default: {MTF_DATASHEET_SERIES}; "
+                               "'*' for all)")
+    mtf_opts.add_argument("--mtf-two-distance", nargs=2, metavar=("NEAR", "FAR"),
+                          default=list(MTF_TWO_DISTANCE),
+                          help="center series at two distances for the print-vs-camera test "
+                               f"(default: {' '.join(MTF_TWO_DISTANCE)}; skipped if either is missing)")
 
     noise = p.add_argument_group("noise and dynamic range options")
     noise.add_argument("--flat-fields", type=Path, metavar="PATH",

@@ -8,6 +8,7 @@ Run from the repository root:
     uv run pytest --calibration-images images/iPhone16/Lightroom/Checkerboard
     uv run pytest --calibration-images <folder> --calibration-exposure 1/125
     uv run pytest --sample-dng <one DNG from the camera>
+    uv run pytest --slanted-edges images/iPhone16/Lightroom/slanted
     uv run pytest --flat-fields images/iPhone16/Lightroom/ISO64_Sunset \
                   --dark-frames images/iPhone16/Lightroom/ISO64_Dark
 
@@ -39,6 +40,8 @@ def pytest_addoption(parser):
                     help="one real DNG for the camera-identity tests")
     group.addoption("--flat-fields", type=Path, default=None,
                     help="folder of real flat-field pairs for the noise and dynamic-range tests")
+    group.addoption("--slanted-edges", type=Path, default=None,
+                    help="folder of real slanted-edge captures (one subfolder per series)")
     group.addoption("--dark-frames", type=Path, default=None,
                     help="folder of real dark frames for the noise test (optional)")
 
@@ -65,6 +68,11 @@ def real_calibration_exposure(request):
 @pytest.fixture
 def real_sample_dng(request):
     return _option_or_skip(request, "sample_dng")
+
+
+@pytest.fixture
+def real_slanted_edges(request):
+    return _option_or_skip(request, "slanted_edges")
 
 
 @pytest.fixture
