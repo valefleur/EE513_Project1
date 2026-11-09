@@ -1,61 +1,100 @@
 {
   "_README": "EE 513 Project 1. Copy this file into your repository as results.json and replace every value with your own measurement. Each entry is [value, uncertainty] in the units named by the key. Use null for anything you did not measure; do not delete keys, and do not invent an uncertainty you cannot defend.",
-  "camera": null,
-  "capture_app": "Adobe Lightroom (built-in camera, Pro mode)",
-  "cfa_pattern": null,
-  "raw_width_px": null,
-  "raw_height_px": null,
-  "binned_from_higher_resolution_sensor": null,
-  "focal_length_px": null,
-  "focal_length_mm": null,
-  "principal_point_x_px": null,
-  "principal_point_y_px": null,
-  "distortion_k1": null,
-  "distortion_k2": null,
-  "distortion_p1": null,
-  "distortion_p2": null,
-  "reprojection_rms_px": null,
-  "n_calibration_images_used": null,
-  "checkerboard_square_mm_measured": [
-    20.01,
-    null
+  "camera": "iPhone 16 Pro Max back camera 6.765mm f/1.78",
+  "capture_app": "Adobe Lightroom 11.6.21 (iOS)",
+  "cfa_pattern": "BGGR",
+  "raw_width_px": 4032,
+  "raw_height_px": 3024,
+  "binned_from_higher_resolution_sensor": true,
+  "focal_length_px": [
+    2946.2176,
+    4.3725
   ],
-  "mtf50_center_cy_per_px": null,
-  "mtf50_corner_mean_cy_per_px": null,
-  "mtf50_corner_worst_cy_per_px": null,
+  "focal_length_mm": [
+    7.1292,
+    0.0864
+  ],
+  "principal_point_x_px": [
+    2019.8039,
+    1.8126
+  ],
+  "principal_point_y_px": [
+    1512.7288,
+    2.0603
+  ],
+  "distortion_k1": [
+    0.1174,
+    0.002
+  ],
+  "distortion_k2": [
+    -0.3134,
+    0.0048
+  ],
+  "distortion_p1": [
+    -0.0008,
+    0.0002
+  ],
+  "distortion_p2": [
+    -0.0001,
+    0.0002
+  ],
+  "reprojection_rms_px": [
+    2.2682,
+    0.078
+  ],
+  "n_calibration_images_used": 30,
+  "checkerboard_square_mm_measured": [
+    20.0,
+    0.04
+  ],
+  "mtf50_center_cy_per_px": [
+    0.3492,
+    0.0054
+  ],
+  "mtf50_corner_mean_cy_per_px": [
+    0.3792,
+    0.0125
+  ],
+  "mtf50_corner_worst_cy_per_px": [
+    0.3532,
+    0.0116
+  ],
   "conversion_gain_dn_per_e": [
-    0.2567,
-    0.0019
+    0.2532,
+    0.0013
   ],
   "read_noise_e": [
-    6.99,
-    0.32
+    7.24,
+    0.09
   ],
-  "dark_current_e_per_s": null,
+  "dark_current_e_per_s": [
+    0.169,
+    0.041
+  ],
   "iso_of_noise_measurement": 64,
   "black_level_dn": [
-    528.0,
-    null
+    527.45,
+    0.05
   ],
   "white_level_dn": 4095,
   "vendor_noiseprofile_present": true,
   "dynamic_range_stops": [
     10.9,
-    null
+    0.01
   ],
-  "dynamic_range_criterion": "DR = log2(full well / read noise), with full well = (saturation - black level) / conversion gain and the floor at the read noise, i.e. SNR = 1 at the low end in the read-noise-limited regime.",
+  "dynamic_range_criterion": "DR = log2(S_max / S_min) with S_max = white level - black level and S_min = the read noise (the signal equal to the noise floor, i.e. SNR = 1 counting read noise only); read noise from the intercept of a pair-difference photon transfer fit below 10% of the span. Equivalently 65.6 dB as 20 log10(S_max / S_min). The exact SNR = 1 point, which includes the signal's own shot noise, gives 10.80 stops.",
   "delta_e_metric": "CIEDE2000",
   "colorchecker_reference_set": "ColorChecker24 - After November 2014",
   "delta_e_mean_before_ccm": [
-    9.5,
-    0.16
+    12.38,
+    0.07
   ],
   "delta_e_mean_after_ccm": [
-    4.1,
-    0.52
+    3.47,
+    0.09
   ],
   "delta_e_worst_after_ccm": [
-    8.14,
-    1.18
+    7.15,
+    0.57
   ]
 }
