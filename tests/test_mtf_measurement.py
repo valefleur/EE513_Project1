@@ -101,7 +101,7 @@ def test_two_distance_verdicts():
 
 
 def test_datasheet_values_pick_the_farthest_corner_and_propagate_uncertainty():
-    s = lambda mean, sd, radius: dict(mean=mean, sd=sd, n=5, radius=radius, by_direction={}, peak=0.5, white=0.5)
+    s = lambda mean, sd, radius: dict(mean=mean, sd=sd, n=5, radius=radius, by_direction={}, peak=0.5, paper_level=0.5)
     summaries = {
         "center_25cm": {"center": s(0.33, 0.01, 0.1), "top left": s(0.30, 0.02, 0.6),
                         "top right": s(0.29, 0.02, 0.6), "bottom left": s(0.28, 0.02, 0.6),
@@ -222,17 +222,31 @@ def test_datasheet_series_and_center_pick():
 
 def test_repeats_at_a_comparable_radius_add_a_systematic_uncertainty():
     """The Sat Nov 7 bottom-left case: 0.265 +/- 0.008 (radius 0.71) and 0.160 +/- 0.024
-    (radius 0.69) are repeats of one position; their spread, sd 0.074, is added in
-    quadrature. A series farther than RADIUS_MATCH away is not a repeat."""
-    s = lambda mean, sd, radius: dict(mean=mean, sd=sd, n=5, radius=radius, by_direction={}, peak=0.5, white=0.5)
+    (radius 0.69) qualify as repeats of one position, so the value is their average and
+    the uncertainty their spread (sd 0.074; the within-series rms 0.018 is smaller). A
+    series farther than RADIUS_MATCH away does not qualify."""
+    s = lambda mean, sd, radius: dict(mean=mean, sd=sd, n=5, radius=radius, by_direction={}, peak=0.5, paper_level=0.5)
     summaries = {"center_501mm": {"center": s(0.369, 0.004, 0.15)},
                  "left_top_501mm": {"bottom left": s(0.265, 0.008, 0.71), "top left": s(0.310, 0.016, 0.76)},
                  "left_bottom_501mm": {"bottom left": s(0.160, 0.024, 0.69), "top left": s(0.167, 0.004, 0.58)}}
     v = mtf.datasheet_values(summaries, "center_501mm")
     bl, tl = v["corners"]["bottom left"], v["corners"]["top left"]
     sd_sys = np.std([0.265, 0.160], ddof=1)
-    assert bl["mean"] == 0.265 and bl["sd_sys"] == pytest.approx(sd_sys)
-    assert bl["sd"] == pytest.approx(np.hypot(0.008, sd_sys))
+    assert bl["mean"] == pytest.approx((0.265 + 0.160) / 2) and bl["sd_sys"] == pytest.approx(sd_sys)
+    assert bl["sd_within"] == pytest.approx(np.sqrt((0.008 ** 2 + 0.024 ** 2) / 2))
+    assert bl["sd"] == pytest.approx(max(sd_sys, bl["sd_within"]))
     assert sorted(bl["repeats"]) == ["left_bottom_501mm", "left_top_501mm"]
     assert tl["sd_sys"] is None and tl["sd"] == 0.016          # 0.58 is not within 0.05 of 0.76
     assert v["corner_mean"]["sd"] == pytest.approx(np.hypot(bl["sd"], tl["sd"]) / 2)
+
+
+
+def test_qualifying_series_that_agree_closely_keep_the_within_series_sd():
+    """Two qualifying series that happen to agree to 0.001 must not report a smaller
+    uncertainty than their own frame noise: sd = max(sd_sys, sd_within)."""
+    s = lambda mean, sd, radius: dict(mean=mean, sd=sd, n=5, radius=radius, by_direction={}, peak=0.5, paper_level=0.5)
+    summaries = {"center_501mm": {"center": s(0.369, 0.004, 0.15)},
+                 "a_501mm": {"top right": s(0.400, 0.020, 0.72)},
+                 "b_501mm": {"top right": s(0.401, 0.020, 0.70)}}
+    tr = mtf.datasheet_values(summaries, "center_501mm")["corners"]["top right"]
+    assert tr["sd_sys"] < 0.001 and tr["sd"] == pytest.approx(0.020)

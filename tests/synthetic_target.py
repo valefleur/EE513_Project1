@@ -70,7 +70,7 @@ def render_target(size=(1600, 1200), psf_sigma_px=1.5, tilt_deg=5.0, offset=(0, 
 
 
 def write_target_dngs(folder, n=3, seed=0, noise_dn=2.0, level=3000, **render_kw):
-    """n noisy DNG captures of the same rendered target (BGGR, black 100)."""
+    """n noisy DNG captures of the same rendered target (BGGR, black level 100)."""
     folder.mkdir(parents=True, exist_ok=True)
     img = render_target(**render_kw)
     rng = np.random.default_rng(seed)

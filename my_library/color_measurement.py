@@ -78,7 +78,7 @@ def chart_catalog(rounds, saturation_dn, black_level=None):
     meta.assert_one_camera(paths)
     ident, n = meta.series_identity(paths)
     if black_level is not None:
-        declared = sorted({b for blacks in catalog["black_levels"] for b in blacks})
+        declared = sorted({b for levels in catalog["black_levels"] for b in levels})
         if declared != [black_level]:
             print(f"  note: subtracting black level {black_level} DN; files declare {declared}")
     return catalog, ident, n

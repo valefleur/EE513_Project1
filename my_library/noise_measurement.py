@@ -13,7 +13,7 @@ read noise; the professor attributes the bend to 0.5-0.7% of the mean surviving 
 difference (the phone or the scene changing between frames). The straight low-signal
 part gives K = 0.2567 DN/e- and 6.99 e-, which match a cutoff near 10%.
 
-Dynamic range. With variance(S) = K S + c in DN^2 (S = mean above black, in DN), the read
+Dynamic range. With variance(S) = K S + c in DN^2 (S = mean above the black level, in DN), the read
 noise is sqrt(c) DN = sqrt(c) / K electrons and the saturation capacity is span / K
 electrons, so
 
@@ -126,7 +126,7 @@ def signal_at_snr(K, c_dn2, target_snr):
     Returns
     -------
     float or ndarray
-        Signal S in DN above black at which SNR = target_snr. Divide by K for electrons.
+        Signal S in DN above the black level at which SNR = target_snr. Divide by K for electrons.
     """
     t2 = target_snr ** 2
     return 0.5 * (t2 * K + np.sqrt((t2 * K) ** 2 + 4.0 * t2 * c_dn2))
@@ -198,7 +198,7 @@ def dynamic_range_table(span_dn, K, c_dn2, sd_c_dn2=0.0):
     -------
     (rows, knee) : tuple
         rows : list of dict, one per floor, with keys
-            floor (str, description), floor_dn (DN above black), floor_e (electrons),
+            floor (str, description), floor_dn (DN above the black level), floor_e (electrons),
             snr_at_floor, ratio (span / floor), stops, sd_stops (None if undefined),
             db (20 log10), sd_db (None if undefined), and region ("below the knee" or
             "above the knee").
@@ -268,10 +268,10 @@ def flat_field_files(folder):
                   if p.is_file() and p.suffix.lower() in ptc.RAW_SUFFIXES)
 
 
-def gain_matched_pair_variance(a, b, black):
+def gain_matched_pair_variance(a, b, black_level):
     """Temporal noise variance of one frame from a pair, with the pair's means matched.
 
-    The math. Two frames of the same flat scene, above black, are
+    The math. Two frames of the same flat scene, above the black level, are
         a = s(x) + n_a(x),   b = s(x) (1 - eps) + n_b(x)
     where s(x) is the signal pattern (the mean S times pixel-gain variation and lens
     shading), n_a and n_b are independent temporal noise, and eps is the fraction by
@@ -290,7 +290,7 @@ def gain_matched_pair_variance(a, b, black):
     the camera moving across a non-flat scene): see plane_removed_pair_variance and
     difference_structure.
 
-    Scaling b by g = mean(a) / mean(b) (means above black) removes eps s(x) for a
+    Scaling b by g = mean(a) / mean(b) (means above the black level) removes eps s(x) for a
     uniform change: a - g b = n_a - g n_b, var = sigma^2 (1 + g^2), so the per-frame
     variance is var(a - g b) / (1 + g^2) (dividing by 1 + g^2, not 2, accounts for
     scaling b's noise by g).
@@ -298,8 +298,8 @@ def gain_matched_pair_variance(a, b, black):
     Parameters
     ----------
     a, b : ndarray
-        The two patches, raw DN (black not yet subtracted), same shape.
-    black : float
+        The two patches, raw DN (black level not yet subtracted), same shape.
+    black_level : float
         Black level in DN.
 
     Returns
@@ -308,8 +308,8 @@ def gain_matched_pair_variance(a, b, black):
         var : per-frame temporal noise variance in DN^2, matched means.
         eps : mean(a) / mean(b) - 1, the relative change in light between the frames.
     """
-    sa = np.asarray(a, float) - black
-    sb = np.asarray(b, float) - black
+    sa = np.asarray(a, float) - black_level
+    sb = np.asarray(b, float) - black_level
     g = sa.mean() / sb.mean()
     return float(np.var(sa - g * sb) / (1.0 + g ** 2)), float(g - 1.0)
 
@@ -320,7 +320,7 @@ def _plane(h, w):
     return np.column_stack([np.ones(h * w), xx.ravel(), yy.ravel()])
 
 
-def plane_removed_pair_variance(a, b, black=0.0):
+def plane_removed_pair_variance(a, b, black_level=0.0):
     """Temporal noise variance of one frame from a pair, after removing a fitted plane
     from the difference image.
 
@@ -343,7 +343,7 @@ def plane_removed_pair_variance(a, b, black=0.0):
     ----------
     a, b : ndarray
         The two patches of one pair, raw DN, same shape.
-    black : float, default 0.0
+    black_level : float, default 0.0
         Black level in DN (cancels in the difference; kept for a uniform signature).
 
     Returns
@@ -351,7 +351,7 @@ def plane_removed_pair_variance(a, b, black=0.0):
     float
         Per-frame temporal noise variance in DN^2.
     """
-    d = (np.asarray(a, float) - black) - (np.asarray(b, float) - black)
+    d = (np.asarray(a, float) - black_level) - (np.asarray(b, float) - black_level)
     h, w = d.shape
     A = _plane(h, w)
     coef, *_ = np.linalg.lstsq(A, d.ravel(), rcond=None)
@@ -393,7 +393,7 @@ def fit_ptc_weighted(mean, var, span, cutoff, n_pixels, n_params_removed=0, iter
     Parameters
     ----------
     mean, var : array_like
-        Mean signal above black (DN) and variance (DN^2) of each pair.
+        Mean signal above the black level (DN) and variance (DN^2) of each pair.
     span : float
         Saturation span in DN.
     cutoff : float
@@ -439,11 +439,50 @@ PAIR_METHODS = ("pair difference", "gain-matched", "plane-removed")
 _VAR_KEY = {"pair difference": "var", "gain-matched": "var_matched", "plane-removed": "var_plane"}
 
 
+def measure_black_level(dark_folder):
+    """The camera's actual black level, measured from lens-capped frames.
+
+    The math. The DNG's BlackLevel tag is a declared constant (528 DN in every file), not
+    a measurement; its spread over files is always zero. The actual offset is the mean
+    level of a dark frame at zero exposure: each color channel's mean is fitted against
+    exposure time (mean(t) = black level + K D t, D the dark current) and the intercept is
+    that channel's black level (photon_transfer_curve.dark_current_fit, level0). The
+    shortest exposure's mean is not used, because it includes dark signal accumulated
+    during that exposure. The reported value is the mean of the channel intercepts (R,
+    B, and the average of the two greens), and its uncertainty their sample sd (the
+    channel-to-channel spread, larger than each intercept's own fit error).
+
+    The dark-frame tables and fit printed by photon_transfer_curve are suppressed here;
+    measure_dark_current prints them once in the noise report.
+
+    Parameters
+    ----------
+    dark_folder : str or Path
+        Dark frames, several exposure times, one ISO.
+
+    Returns
+    -------
+    dict
+        mean, sd (DN); channels ({channel: black level in DN}); declared (the BlackLevel tag);
+        iso (the dark frames' ISO).
+    """
+    with contextlib.redirect_stdout(io.StringIO()):         # tables reprinted by measure_dark_current
+        rows = ptc.dark_frame_stats(dark_folder, K=1.0)
+        fit = ptc.dark_current_fit(rows, 1.0, 0.0, plot_path=None, title="")
+    import matplotlib.pyplot as plt
+    plt.close("all")
+    declared = float(rows[0]["black_levels"][0])
+    channels = {k: declared + v["level0"] for k, v in fit.items() if k != "summary"}
+    vals = np.array(list(channels.values()))
+    return dict(mean=float(vals.mean()), sd=float(vals.std(ddof=1)), channels=channels,
+                declared=declared, iso=rows[0]["iso"])
+
+
 def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, method="pair difference"):
     """Photon transfer fit on the consecutive flat-field pairs in folder.
 
     The math (05_photon_transfer.ipynb sections 1 and 3). For a mean signal S (DN above
-    black) the temporal noise variance of one frame is
+    black level) the temporal noise variance of one frame is
         var(S) = K S + c,   K = conversion gain (DN/e-), c = (K sigma_r)^2 (DN^2)
     because shot noise in electrons has variance equal to the mean (Poisson) and the
     camera scales electrons by K (variances by K^2). Each pair gives one (S, var) point;
@@ -455,6 +494,12 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, meth
     gain-matched one (gain_matched_pair_variance) and the plane-removed one
     (plane_removed_pair_variance). All three are fitted; `method` picks which fit is
     "the" fit used for results.
+
+    Black level. Each pair's mean is taken above black_level (the measured black level from
+    the dark frames, by default), not above the file's declared BlackLevel: a black level
+    0.5 DN off shifts every S by 0.5 DN, and the fitted intercept by K x 0.5 (about 0.13
+    DN^2 here, ~4% of c). The same fit with the declared black level is kept as fit_declared
+    for comparison.
 
     Runs the lens_id assertion and series identity on the files first, and uses the
     central 128 x 128 patch of one green plane, as in HW3. Stops (SystemExit) if there
@@ -468,7 +513,8 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, meth
     white_level : float
         Saturation level in DN (e.g. 4095).
     black_level : float
-        Black level in DN (e.g. 528). The span is white_level - black_level.
+        Black level in DN subtracted from every pair's mean (e.g. the measured 527.45, or
+        the declared 528). The span is white_level - black_level.
     cutoff : float, default LOW_SIGNAL_CUTOFF (0.10)
         Fit only pairs whose mean is below this fraction of the span.
     method : str, default "pair difference"
@@ -482,10 +528,14 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, meth
         fits : {method name: fit} for all three methods.
         method : the selected method's name.
         rows : list of dict, one per pair (mean, var, var_matched, var_plane, eps, var_single,
-            iso, black, white, peak, flagged, files, ...).
+            iso, black (the file's declared black level; key named by
+            photon_transfer_curve, HW3), white (the file's white level, likewise),
+            peak, flagged, files, ...).
         pairs : list of dict, the patches (a, b) and settings of each pair.
         span : float, the span in DN.  iso : the ISO of every pair.
         cutoff : float, as given.  n_used : int, pairs in the selected fit.
+        fit_declared : the selected method's fit with each pair's mean above the file's
+            declared black level instead (for comparison); rows keep mean_declared.
         ident : dict, the camera identity from series_identity.
         files : list of Path, the flat-field files.
         white_level, black_level : as given.
@@ -500,15 +550,18 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, meth
     with contextlib.redirect_stdout(io.StringIO()):     # load_flat_pairs prints a HW3 heading
         pairs = ptc.load_flat_pairs(folder)
     rows = ptc.analyze_pairs(pairs)
+    for row in rows:                                    # mean above the black level actually used
+        row["mean_declared"] = row["mean"]
+        row["mean"] = row["mean"] + (row["black"] - black_level)
     for row, pair in zip(rows, pairs):
         row["var_matched"], row["eps"] = gain_matched_pair_variance(pair["a"], pair["b"], pair["black"])
         row["var_plane"] = plane_removed_pair_variance(pair["a"], pair["b"], pair["black"])
     isos = sorted({r["iso"] for r in rows})
-    blacks = sorted({r["black"] for r in rows})
+    declared_black_levels = sorted({r["black"] for r in rows})
     if len(isos) != 1:
         raise SystemExit(f"flat fields mix ISOs {isos}; one ISO per measurement")
-    if blacks != [black_level]:
-        print(f"  note: files declare black level {blacks}; the span uses {black_level} DN")
+    if declared_black_levels != [black_level]:
+        print(f"  black level: files declare {declared_black_levels}; means and span use {black_level:.2f} DN")
     span = float(white_level - black_level)
 
     if method not in PAIR_METHODS:
@@ -519,6 +572,10 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, meth
                                 n_pix, n_params_removed=3 if m == "plane-removed" else 0)
             for m in PAIR_METHODS}
     fit = fits[method]
+    mean_decl = np.array([r["mean_declared"] for r in rows])
+    fit_declared = fit_ptc_weighted(mean_decl, np.array([r[_VAR_KEY[method]] for r in rows]),
+                                    float(white_level - declared_black_levels[0]), cutoff, n_pix,
+                                    n_params_removed=3 if method == "plane-removed" else 0)
     n_used = int(fit["used"].sum())
     flagged = sum(r["flagged"] for r in rows)
     print(f"{len(rows)} pairs at ISO {isos[0]}; {n_used} below {cutoff:.0%} of the "
@@ -527,7 +584,7 @@ def measure_ptc(folder, white_level, black_level, cutoff=LOW_SIGNAL_CUTOFF, meth
         raise SystemExit(f"only {n_used} pairs below {cutoff:.0%} of the span; too few to fit")
     return dict(fit=fit, fits=fits, method=method, rows=rows, pairs=pairs, span=span,
                 iso=isos[0], cutoff=cutoff, n_used=n_used, ident=ident, files=paths,
-                white_level=white_level, black_level=black_level)
+                white_level=white_level, black_level=black_level, fit_declared=fit_declared)
 
 
 def report_dynamic_range(ptc_result):
@@ -727,7 +784,7 @@ def predicted_block_ratio(d, block=8):
     return float(np.sqrt(r2)) if r2 > 0 else float("nan")
 
 
-def difference_structure(a, b, black, block=8):
+def difference_structure(a, b, black_level, block=8):
     """Does the pair's difference image hold structure beyond noise? A number, not a look.
 
     The math. If a and b differ only by temporal noise, d = a - b is white noise with
@@ -751,7 +808,7 @@ def difference_structure(a, b, black, block=8):
     ----------
     a, b : ndarray
         The two patches of one pair, raw DN, same shape (cropped to a multiple of block).
-    black : float
+    black_level : float
         Black level in DN.
     block : int, default 8
         Side of the averaging blocks, in pixels.
@@ -759,7 +816,7 @@ def difference_structure(a, b, black, block=8):
     Returns
     -------
     dict
-        eps : mean(a) / mean(b) - 1 (means above black).
+        eps : mean(a) / mean(b) - 1 (means above the black level).
         R_plain, R_matched, R_plane : the block-structure ratios (about 1 for pure noise).
         rho : (rho_x, rho_y), neighbor correlations of the plane-removed difference
             (neighbor_correlation); R_predicted : the R its full spatial correlation
@@ -769,8 +826,8 @@ def difference_structure(a, b, black, block=8):
         d_plain, d_matched, d_plane : the difference images (DN), for plotting.
         blocks_plain, blocks_matched, blocks_plane : their block-mean maps (DN).
     """
-    sa = np.asarray(a, float) - black
-    sb = np.asarray(b, float) - black
+    sa = np.asarray(a, float) - black_level
+    sb = np.asarray(b, float) - black_level
     h, w = (sa.shape[0] // block) * block, (sa.shape[1] // block) * block
     sa, sb = sa[:h, :w], sb[:h, :w]
     g = sa.mean() / sb.mean()
@@ -1096,10 +1153,10 @@ def vendor_noise_profile(path, K, read, sK=None, s_read=None):
     """The camera's own noise model (DNG NoiseProfile tag), converted to K and read noise.
 
     The math. The DNG NoiseProfile gives, per color plane, a scale S and offset O of the
-    noise variance in normalized units x = (D - black) / span:
+    noise variance in normalized units x = (D - black level) / span:
         var(x) = S x + O.
-    In DN, D - black = span x and variances scale by span^2, so
-        var_DN = S span (D - black) + O span^2,
+    In DN, D - black level = span x and variances scale by span^2, so
+        var_DN = S span (D - black level) + O span^2,
     which is the photon transfer line with K = S span and c = O span^2. The read noise
     in electrons is sqrt(c) / K = sqrt(O) / S. (image_metadata.compare_noise_profile
     does this conversion and prints it.)
@@ -1132,7 +1189,7 @@ def measure_dark_current(folder, K, sK, plot_path=None):
     """Dark current from lens-capped frames at several exposure times.
 
     The math. With no light, the mean level rises with exposure time t only through
-    thermally generated electrons: mean(t) = black + K D t, D in e-/s. A straight-line
+    thermally generated electrons: mean(t) = black level + K D t, D in e-/s. A straight-line
     fit of each color channel's mean against t gives the slope K D in DN/s; dividing by
     K gives D, with the fit's standard error and the uncertainty of K combined
     (photon_transfer_curve.dark_current_fit). A slope consistent with zero is a
@@ -1159,7 +1216,7 @@ def measure_dark_current(folder, K, sK, plot_path=None):
         rate_e_s, sd_rate_e_s : the green-average dark current and its sd (e-/s),
             the value reported (the noise measurement is on a green plane).
         upper_95_e_s : the largest channel rate + 2 sd, a conservative bound.
-        black_measured_dn : the green-average fit's level at zero exposure, a measured
+        black_level_measured_dn : the green-average fit's level at zero exposure, a measured
             black level to compare with the declared one. (The shortest exposure's mean
             is not used: it includes dark signal accumulated during that exposure.)
     """
@@ -1174,7 +1231,53 @@ def measure_dark_current(folder, K, sK, plot_path=None):
     g = fit["G avg"]
     return dict(rows=rows, fit=fit, rate_e_s=float(g["rate"]), sd_rate_e_s=float(g["s_rate"]),
                 upper_95_e_s=float(fit["summary"]["upper_95"]),
-                black_measured_dn=float(g["level0"] + rows[0]["black_levels"][0]))
+                black_level_measured_dn=float(g["level0"] + rows[0]["black_levels"][0]))
+
+
+def plot_ptc_black_level_comparison(ptc_result, out_png):
+    """Photon transfer points and fits with the black level actually used and with the
+    file's declared black level, overlaid (the declared set at alpha 0.7), log-log.
+
+    A black level off by delta DN shifts every mean by delta, which on a log axis moves
+    the dimmest pairs most (0.5 DN is 6% of an 8 DN signal, 0.02% of 3000 DN), and moves
+    the fitted intercept c by K x delta.
+
+    Parameters
+    ----------
+    ptc_result : dict
+        The return value of measure_ptc.
+    out_png : str or Path
+
+    Returns
+    -------
+    Path
+        The path written.
+    """
+    import matplotlib.pyplot as plt
+    rows, span = ptc_result["rows"], ptc_result["span"]
+    key = _VAR_KEY[ptc_result["method"]]
+    var = np.array([r[key] for r in rows])
+    declared = rows[0]["black"]
+    used = ptc_result["black_level"]
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    grid = np.logspace(0, np.log10(span), 200)
+    for label, x, fit, style in ((f"black level {used:.2f} DN (used)", np.array([r["mean"] for r in rows]),
+                                  ptc_result["fit"], dict(alpha=1.0, ls="-", marker="o")),
+                                 (f"black level {declared:.0f} DN (declared)", np.array([r["mean_declared"] for r in rows]),
+                                  ptc_result["fit_declared"], dict(alpha=0.7, ls="--", marker="s"))):
+        ok = x > 0
+        line, = ax.loglog(x[ok], var[ok], style["marker"], mfc="none", ms=5, alpha=style["alpha"],
+                          label=f"{label}: K {fit['K']:.4f} DN/e-, read {fit['read']:.2f} e-")
+        ax.loglog(grid, fit["K"] * grid + max(fit["c"], 1e-9), style["ls"], lw=1, color=line.get_color(),
+                  alpha=style["alpha"])
+    ax.axvline(ptc_result["cutoff"] * span, color="0.4", ls=":", lw=1)
+    ax.set_xlabel("mean signal above the black level (DN)"); ax.set_ylabel("variance (DN$^2$)")
+    ax.set_title(f"Photon transfer, ISO {ptc_result['iso']}: measured vs declared black level", fontsize=10)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    out_png = Path(out_png); out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=130); plt.close(fig)
+    return out_png
 
 
 def plot_ptc_methods(ptc_result, single, out_png):
@@ -1207,7 +1310,7 @@ def plot_ptc_methods(ptc_result, single, out_png):
         ax.loglog(grid, fit["K"] * grid + max(fit["c"], 1e-9), "-", lw=1, color=line.get_color())
     ax.axvline(cutoff * span, color="0.4", ls=":", lw=1)
     ax.text(cutoff * span * 1.05, 0.05, f"fit cutoff {cutoff:.0%}", transform=ax.get_xaxis_transform(), fontsize=8)
-    ax.set_xlabel("mean signal above black (DN)"); ax.set_ylabel("variance (DN$^2$)")
+    ax.set_xlabel("mean signal above the black level (DN)"); ax.set_ylabel("variance (DN$^2$)")
     ax.set_title(f"Photon transfer, ISO {ptc_result['iso']}: variance estimates compared")
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -1250,7 +1353,7 @@ def plot_difference_image(structure, title, out_png):
     return out_png
 
 
-def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=None):
+def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=None, black_level_plot=True):
     """Run every part of the noise measurement on one photon transfer result and print it.
 
     Parts: the gain and read noise from the selected fit, both fits side by side; the
@@ -1268,6 +1371,9 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
         Dark frames for the dark current; skipped if None or missing.
     noise_profile_file : str or Path, optional
         Raw file whose NoiseProfile to compare; defaults to the first flat field.
+    black_level_plot : bool, default True
+        Save noise_ptc_black_level_comparison.png (plot_ptc_black_level_comparison):
+        the photon transfer curve with the measured and the declared black level.
 
     Returns
     -------
@@ -1292,6 +1398,17 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
         mark = "  <- selected" if name == ptc_result["method"] else ""
         print(f"  {name:16s} K = {f['K']:.4f} +/- {f['sK']:.4f} DN/e-   read noise = "
               f"{f['read']:.2f} +/- {f['s_read']:.2f} e-   intercept c = {f['c']:.3f} +/- {f['sc']:.3f} DN^2{mark}")
+    measured_black_level = ptc_result.get("black_level_measurement")
+    fd = ptc_result["fit_declared"]
+    if measured_black_level is not None:
+        mbl = measured_black_level
+        ch = ", ".join(f"{k} {v:.2f}" for k, v in mbl["channels"].items())
+        print(f"  black level: declared {mbl['declared']:.0f} DN; measured {mbl['mean']:.2f} +/- {mbl['sd']:.2f} DN "
+              f"(dark-frame zero-exposure intercepts: {ch}); means use {ptc_result['black_level']:.2f} DN")
+    print(f"  same fit with the declared black level {ptc_result['rows'][0]['black']:.0f} DN: K = {fd['K']:.4f} DN/e-, "
+          f"read noise = {fd['read']:.2f} +/- {fd['s_read']:.2f} e-, c = {fd['c']:.3f} DN^2")
+    if black_level_plot:
+        plot_ptc_black_level_comparison(ptc_result, output_dir / "noise_ptc_black_level_comparison.png")
     eps = np.array([r["eps"] for r in ptc_result["rows"]])
     print(f"  light change between frames (eps): median |eps| {100 * np.median(np.abs(eps)):.2f}%, "
           f"largest {100 * eps[np.argmax(np.abs(eps))]:+.2f}%")
@@ -1299,7 +1416,7 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
     knee = read ** 2
     sd_knee = 2 * read * s_read
     print(f"\nRegimes: read noise and shot noise are equal at the knee, S = sigma_r^2 = "
-          f"{knee:.1f} +/- {sd_knee:.1f} e- = {knee * K:.2f} DN above black (SNR there "
+          f"{knee:.1f} +/- {sd_knee:.1f} e- = {knee * K:.2f} DN above the black level (SNR there "
           f"{read / np.sqrt(2):.2f}). Below it the camera is read-noise limited, above it "
           "photon (shot-noise) limited.")
     if np.isfinite(read):
@@ -1402,8 +1519,8 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
         print()
         dark = measure_dark_current(dark_folder, K, sK, plot_path=output_dir / "noise_dark_current.png")
         print(f"  reported (green average): {dark['rate_e_s']:+.3f} +/- {dark['sd_rate_e_s']:.3f} e-/s; "
-              f"conservative bound {dark['upper_95_e_s']:.3f} e-/s; zero-exposure black "
-              f"{dark['black_measured_dn']:.2f} DN vs declared {ptc_result['black_level']}")
+              f"conservative bound {dark['upper_95_e_s']:.3f} e-/s; zero-exposure black level "
+              f"{dark['black_level_measured_dn']:.2f} DN vs declared {ptc_result['black_level']}")
     elif dark_folder:
         print(f"\nDark frames: {dark_folder} not found; dark current skipped")
 
@@ -1412,7 +1529,8 @@ def report_noise(ptc_result, output_dir, dark_folder=None, noise_profile_file=No
     return dict(K=K, sK=sK, read_e=read, s_read_e=s_read, c=fit["c"], sc=fit["sc"],
                 knee_e=knee, sd_knee_e=sd_knee, knee_dn=knee * K, method=ptc_result["method"],
                 iso=iso, structure=structure, single=single, vendor=vendor, dark=dark,
-                spectrum=noise_power_spec, dark_spectrum=dark_spec)
+                spectrum=noise_power_spec, dark_spectrum=dark_spec, black_level_measurement=measured_black_level,
+                read_e_declared_black_level=fd["read"])
 
 
 def noise_results_entries(summary):
@@ -1428,12 +1546,16 @@ def noise_results_entries(summary):
     dict
         conversion_gain_dn_per_e [K, sd], read_noise_e [read, sd],
         dark_current_e_per_s [rate, sd] (green average; omitted if no dark frames),
-        iso_of_noise_measurement (int), vendor_noiseprofile_present (bool).
+        iso_of_noise_measurement (int), vendor_noiseprofile_present (bool),
+        black_level_dn [measured mean, channel sd] when the black level was measured.
     """
     out = {"conversion_gain_dn_per_e": [round(summary["K"], 4), round(summary["sK"], 4)],
            "read_noise_e": [round(summary["read_e"], 2), round(summary["s_read_e"], 2)],
            "iso_of_noise_measurement": int(summary["iso"]),
            "vendor_noiseprofile_present": summary["vendor"] is not None}
+    if summary.get("black_level_measurement") is not None:
+        mbl = summary["black_level_measurement"]
+        out["black_level_dn"] = [round(mbl["mean"], 2), round(mbl["sd"], 2)]
     if summary["dark"] is not None:
         out["dark_current_e_per_s"] = [round(summary["dark"]["rate_e_s"], 3),
                                        round(summary["dark"]["sd_rate_e_s"], 3)]

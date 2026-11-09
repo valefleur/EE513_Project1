@@ -12,7 +12,7 @@ to 0.5. The ESF is always cropped to +/-12 px of the edge before differentiating
 test and real data alike (see slanted_edge_mtf). In DSP terms: ESF = step response, LSF = impulse response, MTF = |frequency
 response|; the slant is equivalent-time sampling.
 
-Data. One green phase of the raw mosaic, black subtracted (linear light, nothing
+Data. One green phase of the raw mosaic, black level subtracted (linear light, nothing
 interpolated), so frequencies are in cycles per green-plane sample: green-plane
 Nyquist is 0.5. One green-plane sample spans two raw pixels, so cycles per raw pixel
 are half these values, and cycles per micrometer divide by 2 x the pixel pitch.
@@ -46,16 +46,16 @@ import my_library.mtf_analysis as mtfa
 REGIONS = ("center", "top left", "top right", "bottom left", "bottom right")
 CORNERS = REGIONS[1:]
 DIRECTIONS = ("vertical", "horizontal")
-CLIPPED_PEAK = 0.98          # white side above this fraction of the span: clipped
+CLIPPED_PEAK = 0.98          # brightest pixel above this fraction of the span: clipped
 MIN_EDGE_DRIFT_PX = 4.0      # edge must drift this far across its rows (see edge_drift)
 RADIUS_MATCH = 0.05          # series this close to a corner's farthest radius count as repeats
-UNDEREXPOSED_WHITE = 0.20    # white side below this fraction of the span: low SNR
+UNDEREXPOSED_PAPER_LEVEL = 0.20   # paper (bright) side below this fraction of the span: low SNR
 
 
 # ----------------------------------------------------------------- reading and finding
 
 def green_plane(path):
-    """One green phase of the raw mosaic, black subtracted, and the span above black.
+    """One green phase of the raw mosaic, black level subtracted, and the span above it.
 
     Parameters
     ----------
@@ -65,7 +65,7 @@ def green_plane(path):
     Returns
     -------
     (plane, span) : tuple
-        plane : ndarray, float, linear DN above black (mosaic[r::2, c::2] for the
+        plane : ndarray, float, linear DN above the black level (mosaic[r::2, c::2] for the
             first green site (r, c) of the Bayer tile).
         span : float, white level minus black level, in DN.
     """
@@ -73,9 +73,9 @@ def green_plane(path):
         bayer = np.asarray(raw.raw_pattern)
         r, c = gm.green_phase(bayer, raw.color_desc.decode())
         plane = raw.raw_image_visible[r::2, c::2].astype(float)
-        black = float(raw.black_level_per_channel[bayer[r, c]])
-        white = float(raw.white_level)
-    return plane - black, white - black
+        black_level = float(raw.black_level_per_channel[bayer[r, c]])
+        white_level = float(raw.white_level)
+    return plane - black_level, white_level - black_level
 
 
 def find_squares(plane):
@@ -263,7 +263,7 @@ def analyze_frame(plane, span):
     plane : ndarray
         Linear green plane.
     span : float
-        White minus black, DN.
+        White level minus black level, DN.
 
     Returns
     -------
@@ -271,7 +271,8 @@ def analyze_frame(plane, span):
         One row per measured edge: region, direction, side, mtf50, slant_deg, radius
         (region center's distance from the frame center as a fraction of the
         half-diagonal: 0 at center, 1 at a frame corner), peak (brightest pixel / span),
-        white (bright-side median / span), drift_px (edge_drift), reliable (drift at
+        paper_level (the paper side's level, its 90th percentile / span; not the sensor's
+        white level), drift_px (edge_drift), reliable (drift at
         least MIN_EDGE_DRIFT_PX), roi, and the curves (freq, mtf, esf_x, esf, lsf).
     """
     shape = plane.shape
@@ -296,7 +297,7 @@ def analyze_frame(plane, span):
             rows.append(dict(region=region, direction=direction, side=side, mtf50=e["mtf50"],
                              slant_deg=e["slant_deg"],
                              radius=float(np.linalg.norm(center - fc) / half_diag),
-                             peak=float(roi.max() / span), white=float(hi / span),
+                             peak=float(roi.max() / span), paper_level=float(hi / span),
                              drift_px=drift, reliable=drift >= MIN_EDGE_DRIFT_PX,
                              roi=(r0, r1, c0, c1), **{k: e[k] for k in ("freq", "mtf", "esf_x", "esf", "lsf")}))
     return rows
@@ -350,11 +351,11 @@ def summarize_series(frames):
     -------
     dict
         {region: dict(mean, sd (None for one frame), n, radius (mean), by_direction
-        {direction: dict(mean, sd, n)}, peak (max), white (mean))}.
+        {direction: dict(mean, sd, n)}, peak (max), paper_level (mean))}.
     """
     out = {}
     for region in REGIONS:
-        per_frame, by_dir, radius, peak, white = [], {d: [] for d in DIRECTIONS}, [], [], []
+        per_frame, by_dir, radius, peak, paper = [], {d: [] for d in DIRECTIONS}, [], [], []
         for rows in frames:
             mine = [r for r in rows if r["region"] == region and np.isfinite(r["mtf50"])
                     and r.get("reliable", True)]
@@ -363,14 +364,14 @@ def summarize_series(frames):
             per_frame.append(np.mean([r["mtf50"] for r in mine]))
             for r in mine:
                 by_dir[r["direction"]].append(r["mtf50"])
-            radius += [r["radius"] for r in mine]; peak += [r["peak"] for r in mine]; white += [r["white"] for r in mine]
+            radius += [r["radius"] for r in mine]; peak += [r["peak"] for r in mine]; paper += [r["paper_level"] for r in mine]
         if not per_frame:
             continue
         v = np.array(per_frame)
         stat = lambda a: dict(mean=float(np.mean(a)), sd=float(np.std(a, ddof=1)) if len(a) > 1 else None, n=len(a))
         out[region] = dict(**stat(v), radius=float(np.mean(radius)),
                            by_direction={d: stat(a) for d, a in by_dir.items() if a},
-                           peak=float(np.max(peak)), white=float(np.mean(white)))
+                           peak=float(np.max(peak)), paper_level=float(np.mean(paper)))
     return out
 
 
@@ -426,14 +427,23 @@ def datasheet_values(summaries, center_series, eligible=None):
     Systematic uncertainty. A series' sd covers only frame-to-frame noise within one
     setup; re-placing the target (tilt, flatness, focus at that spot, lighting) can move
     the result much more. When other eligible series measured the same corner at a
-    comparable position (radius within RADIUS_MATCH of the farthest), they are repeats
-    of the setup, and the sample sd of their means is the between-setup spread:
-        sd_sys = sd(m_1, ..., m_k),  k >= 2,
-        sd_total = sqrt(sd_within^2 + sd_sys^2),
-    combined in quadrature as independent sources. (On Sat Nov 7 the bottom-left corner
-    read 0.265 and 0.160 in two series at radius 0.71 and 0.69: sd_sys = 0.074, about
-    ten times the within-series sd.) With no comparable repeat, sd_sys is not known and
-    the corner keeps its within-series sd; the report should say so.
+    comparable position, they are repeats of the setup. A series qualifies as a repeat
+    when it is eligible (a datasheet series), measured the corner in at least two
+    reliable frames, and its radius for that corner is within RADIUS_MATCH of the
+    farthest radius any eligible series reached for it (the square sat in essentially
+    the same place in the frame). With k >= 2 qualifying series of means m_1 ... m_k,
+    value and uncertainty come from the same series:
+        value    = (m_1 + ... + m_k) / k,
+        sd_sys   = sample sd of m_1 ... m_k (ddof = 1),
+        sd_total = max(sd_sys, sd_within),
+    where sd_within is the root-mean-square of the series' own within-series sds. The
+    spread of the series means already contains each series' frame noise, so the two
+    are not added; the max guards against a chance agreement of two noisy series. Like
+    the color datasheet (plan Q24), this is the sd of a repeat, not the standard error
+    of the mean. (On Sat Nov 7 the bottom-left corner read 0.265 and 0.160 at radius
+    0.71 and 0.69: value 0.213, sd 0.074, about ten times the within-series sd.) With
+    one qualifying series, the value is its mean, sd_sys is not known, and the corner
+    keeps its within-series sd; the report should say so.
 
     Corner mean: the average of the four corners, uncertainty sqrt(sum sd_total_i^2) / 4
     (independent corners). Worst corner: the lowest corner value with its own sd_total.
@@ -469,11 +479,18 @@ def datasheet_values(summaries, center_series, eligible=None):
             continue
         name, v = max(cands, key=lambda kv: kv[1]["radius"])
         repeats = [(n_, s_) for n_, s_ in cands if s_["radius"] >= v["radius"] - RADIUS_MATCH]
-        sd_sys = float(np.std([s_["mean"] for _, s_ in repeats], ddof=1)) if len(repeats) >= 2 else None
-        sd_total = (float(np.hypot(v["sd"] or 0.0, sd_sys)) if sd_sys is not None else v["sd"])
-        out["corners"][corner] = dict(mean=v["mean"], sd=sd_total, sd_within=v["sd"], sd_sys=sd_sys,
-                                      repeats=[n_ for n_, _ in repeats] if sd_sys is not None else [],
-                                      n=v["n"], radius=v["radius"], series=name)
+        if len(repeats) >= 2:
+            means = [s_["mean"] for _, s_ in repeats]
+            withins = [s_["sd"] for _, s_ in repeats if s_["sd"] is not None]
+            sd_within = float(np.sqrt(np.mean(np.square(withins)))) if withins else None
+            sd_sys = float(np.std(means, ddof=1))
+            out["corners"][corner] = dict(
+                mean=float(np.mean(means)), sd=max(sd_sys, sd_within or 0.0), sd_within=sd_within,
+                sd_sys=sd_sys, repeats=[n_ for n_, _ in repeats], n=int(sum(s_["n"] for _, s_ in repeats)),
+                radius=float(np.mean([s_["radius"] for _, s_ in repeats])), series=name)
+        else:
+            out["corners"][corner] = dict(mean=v["mean"], sd=v["sd"], sd_within=v["sd"], sd_sys=None,
+                                          repeats=[], n=v["n"], radius=v["radius"], series=name)
     if out["corners"]:
         vals = list(out["corners"].values())
         sds = [v["sd"] for v in vals if v["sd"] is not None]
@@ -648,7 +665,7 @@ def measure_mtf(folder, output_dir, center_series=None, datasheet_pattern=None, 
             frames.append(rows)
             table += [dict(series=name, file=p.name, **{k: r[k] for k in
                            ("region", "direction", "side", "mtf50", "slant_deg", "drift_px", "reliable",
-                            "radius", "peak", "white")})
+                            "radius", "peak", "paper_level")})
                       for r in rows]
             for r in rows:
                 if not r["reliable"]:
@@ -661,7 +678,7 @@ def measure_mtf(folder, output_dir, center_series=None, datasheet_pattern=None, 
         for region, v in summaries[name].items():
             dirs = ", ".join(f"{d} {s['mean']:.3f}" for d, s in v["by_direction"].items())
             flags = (" CLIPPED" if v["peak"] > CLIPPED_PEAK else "") + \
-                    (f" UNDEREXPOSED (white at {100 * v['white']:.0f}% of span)" if v["white"] < UNDEREXPOSED_WHITE else "")
+                    (f" UNDEREXPOSED (paper at {100 * v['paper_level']:.0f}% of span)" if v["paper_level"] < UNDEREXPOSED_PAPER_LEVEL else "")
             sd = f" +/- {v['sd']:.3f}" if v["sd"] is not None else ""
             print(f"  {region:13s} {v['mean']:.3f}{sd} (n {v['n']}, radius {v['radius']:.2f}; {dirs}){flags}")
     pd.DataFrame(table).to_csv(output_dir / "mtf_frames.csv", index=False)

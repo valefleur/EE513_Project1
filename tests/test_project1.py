@@ -69,6 +69,13 @@ def test_mtf_flag_and_defaults():
     assert args.mtf_two_distance == ["center_250mm", "center_501mm"]
 
 
+def test_black_level_options():
+    args = parse([])
+    assert args.ptc_black_level == "measured" and args.ptc_black_level_plot     # plot by default
+    args = parse(["--ptc-black-level", "declared", "--no-ptc-black-level-plot"])
+    assert args.ptc_black_level == "declared" and not args.ptc_black_level_plot
+
+
 def test_noise_flag_and_defaults():
     assert project1.selected_steps(parse(["--noise"])) == ["noise"]
     assert project1.selected_steps(parse(["--dynamic-range", "--noise"])) == ["noise", "dynamic_range"]

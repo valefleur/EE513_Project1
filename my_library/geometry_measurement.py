@@ -94,8 +94,9 @@ def frame_corners(size):
 
 # ----------------------------------------------------------------- reading raw
 
-def _to_uint8(values, white):
-    return np.clip(np.rint(values / white * 255.0), 0, 255).astype(np.uint8)
+def _to_uint8(values, full_scale):
+    """Scale linear values so full_scale maps to 255, round, and clip to 8 bits."""
+    return np.clip(np.rint(values / full_scale * 255.0), 0, 255).astype(np.uint8)
 
 
 def raw_gray(path, pattern=PATTERN_SIZE):
@@ -105,7 +106,7 @@ def raw_gray(path, pattern=PATTERN_SIZE):
     The four Bayer phases of a neutral target see the same pattern, each scaled by its
     own constant (that color channel's response to the light). Dividing each phase by
     its own white-paper level equalizes them. Only per-phase linear scaling is applied
-    after black subtraction; no pixel is interpolated or moved.
+    after black-level subtraction; no pixel is interpolated or moved.
 
     The white levels are measured on the board itself, because a bright colored object
     elsewhere in the frame would bias whole-frame levels. A rough pass finds the board
@@ -117,12 +118,12 @@ def raw_gray(path, pattern=PATTERN_SIZE):
     """
     with rawpy.imread(str(path)) as raw:          # closed at the end of this block
         mosaic = raw.raw_image_visible.astype(np.float64)
-        blacks = np.asarray(raw.black_level_per_channel, float)
+        black_levels = np.asarray(raw.black_level_per_channel, float)
         bayer = np.asarray(raw.raw_pattern)
         desc = raw.color_desc.decode()
     for r in (0, 1):
         for c in (0, 1):
-            mosaic[r::2, c::2] -= blacks[bayer[r, c]]
+            mosaic[r::2, c::2] -= black_levels[bayer[r, c]]
 
     # Rough pass on a single green phase: one color, no pixels combined, no gains needed.
     # It could instead use a 2x2-binned image (the mean of each B, G, G, R tile), which is
@@ -209,8 +210,10 @@ def board_sharpness(gray, corners, pattern=PATTERN_SIZE):
     """Mean black-to-white transition width across the board's cells, in pixels.
 
     cv.estimateChessboardSharpness: smaller is sharper; OpenCV's docs give about 3 px
-    as the limit for calibration (SHARPNESS_LIMIT_PX). Returns (width_px, min, max
-    brightness) so dim or low-contrast views can be spotted too.
+    as the limit for calibration (SHARPNESS_LIMIT_PX). Returns (width_px,
+    dark_square, light_square): the mean brightness of the board's dark and light
+    squares (8-bit), so dim or low-contrast views can be spotted too. These are the
+    board's square levels, not the sensor's black level.
     """
     stats, _ = cv.estimateChessboardSharpness(gray, pattern, np.asarray(corners, np.float32))
     return float(stats[0]), float(stats[1]), float(stats[2])
@@ -571,10 +574,10 @@ def _detect_in_file(path, detector, overlay_dir=None):
         status = f"{len(corners)} corners" if corners is not None else f"NO full {PATTERN_SIZE} grid"
         save_corner_overlay(gray, corners, Path(overlay_dir) / f"{Path(path).stem}.png",
                             f"{Path(path).name}: {status}")
-    out = dict(size=size, corners=corners, transition_px=None, black=None, white=None,
+    out = dict(size=size, corners=corners, transition_px=None, dark_square=None, light_square=None,
                max_radius_px=None, gain_source=info["gain_source"])
     if corners is not None:
-        out["transition_px"], out["black"], out["white"] = board_sharpness(gray, corners)
+        out["transition_px"], out["dark_square"], out["light_square"] = board_sharpness(gray, corners)
         out["max_radius_px"] = float(np.linalg.norm(
             corners.reshape(-1, 2) - np.array(frame_center(size)), axis=1).max())
     return out
@@ -623,7 +626,7 @@ def measure_geometry(folder, output_dir, square_mm, exposure=None, exclude=(),
         obj.append(objp); img.append(view["corners"])
         kept.append(dict(file=row.file, exposure_s=row.exposure_s,
                          transition_px=view["transition_px"],
-                         black_level=view["black"], white_level=view["white"],
+                         dark_square_dn=view["dark_square"], light_square_dn=view["light_square"],
                          max_radius_px=view["max_radius_px"], gain_source=view["gain_source"]))
         frames[row.file] = row.path
     if len(sizes) != 1:

@@ -76,8 +76,20 @@ def photon_transfer(args):
     per run (cached on args), so both report from the same fit."""
     if getattr(args, "_ptc", None) is None:
         folder = args.flat_fields or args.images / FLAT_FIELD_SUBDIR
-        args._ptc = nm.measure_ptc(folder, args.white_level, args.black_level,
-                                   args.ptc_cutoff, method=args.pair_method)
+        black_level, measured_black_level = args.black_level, None
+        dark = args.dark_frames or args.images / DARK_SUBDIR
+        if args.ptc_black_level == "measured" and Path(dark).is_dir():
+            measured_black_level = nm.measure_black_level(dark)
+            flat_iso = meta.raw_metadata(nm.flat_field_files(folder)[0])["iso"]
+            if measured_black_level["iso"] == flat_iso:
+                black_level = measured_black_level["mean"]
+            else:
+                print(f"note: dark frames are ISO {measured_black_level['iso']}, flat fields ISO {flat_iso}; "
+                      f"using the declared black level {args.black_level}")
+                measured_black_level = None
+        args._ptc = nm.measure_ptc(folder, args.white_level, black_level, args.ptc_cutoff,
+                                   method=args.pair_method)
+        args._ptc["black_level_measurement"] = measured_black_level
     return args._ptc
 
 
@@ -85,7 +97,8 @@ def run_noise(args):
     """Measurement 3: conversion gain, read noise, SNR and its knee, the single-frame
     bias, the vendor NoiseProfile, and dark current."""
     dark = args.dark_frames or args.images / DARK_SUBDIR
-    summary = nm.report_noise(photon_transfer(args), args.output / "noise", dark_folder=dark)
+    summary = nm.report_noise(photon_transfer(args), args.output / "noise", dark_folder=dark,
+                              black_level_plot=args.ptc_black_level_plot)
     return nm.noise_results_entries(summary)
 
 
@@ -239,6 +252,13 @@ def build_parser():
                        metavar="METHOD",
                        help="variance estimate the results use: 'pair difference' (default), "
                             "'gain-matched' or 'plane-removed'; all three are always printed")
+    noise.add_argument("--ptc-black-level", choices=("measured", "declared"), default="measured",
+                       help="black level under the photon transfer means: 'measured' from the dark "
+                            "frames' zero-exposure intercepts (default; written to black_level_dn) "
+                            "or the files' 'declared' BlackLevel")
+    noise.add_argument("--no-ptc-black-level-plot", dest="ptc_black_level_plot", action="store_false",
+                       help="skip the photon transfer plot with the measured and the declared black "
+                            "level overlaid (noise_ptc_black_level_comparison.png; made by default)")
     noise.add_argument("--ptc-cutoff", type=float, default=nm.LOW_SIGNAL_CUTOFF, metavar="FRACTION",
                        help=f"fit only pairs below this fraction of the saturation span "
                             f"(default: {nm.LOW_SIGNAL_CUTOFF}, per HW3 feedback)")

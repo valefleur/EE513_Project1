@@ -7,7 +7,7 @@ import my_library.results as res
 from tests.synthetic_dng import write_dng
 
 K_TRUE, READ_E_TRUE = 0.2567, 6.99           # DN per electron, electrons (HW3 values)
-BLACK, WHITE = 100, 4095                      # the synthetic DNG's levels
+BLACK_LEVEL, WHITE = 100, 4095                      # the synthetic DNG's levels
 
 
 # ------------------------------------------------ analytic cases
@@ -137,26 +137,26 @@ def _simulated_flat_fields(folder, levels_dn, size=320, iso=64, prnu=0.01, seed=
         for frame in (0, 1):
             light = level * (1 - drift * frame) * (1 + frame * ramp * (xx / (size - 1) - 0.5))
             electrons = rng.poisson(light / K_TRUE * gain_pattern)
-            dn = BLACK + K_TRUE * electrons + rng.normal(0, K_TRUE * READ_E_TRUE, (size, size))
+            dn = BLACK_LEVEL + K_TRUE * electrons + rng.normal(0, K_TRUE * READ_E_TRUE, (size, size))
             raw = np.clip(np.rint(dn), 0, WHITE).astype(np.uint16)
             write_dng(folder / f"IMG_{i:02d}_{frame}.dng", raw_data=raw, crop=(size, size),
                       exposure_s=(i + 1) / 1000, iso=iso, noise_profile=noise_profile)
     return folder
 
 
-LEVELS = [8, 15, 30, 60, 110, 180, 260, 340, 800, 1600, 3000]   # DN above black
+LEVELS = [8, 15, 30, 60, 110, 180, 260, 340, 800, 1600, 3000]   # DN above the black level
 
 
 def test_measure_ptc_recovers_the_simulated_sensor(tmp_path, capsys):
     folder = _simulated_flat_fields(tmp_path / "flats", LEVELS)
-    result = nm.measure_ptc(folder, WHITE, BLACK)
+    result = nm.measure_ptc(folder, WHITE, BLACK_LEVEL)
     fit = result["fit"]
     assert result["n_used"] == 8 and result["iso"] == 64
     assert abs(fit["K"] - K_TRUE) < 4 * fit["sK"]
     # Rounding to whole DN adds 1/12 DN^2 to the read-noise variance.
     c_true = (K_TRUE * READ_E_TRUE) ** 2 + 1 / 12
     summary = nm.report_dynamic_range(result)
-    dr_true = np.log2((WHITE - BLACK) / np.sqrt(c_true))
+    dr_true = np.log2((WHITE - BLACK_LEVEL) / np.sqrt(c_true))
     assert abs(summary["dr"] - dr_true) < 4 * summary["sd_dr"]
     out = capsys.readouterr().out
     assert "all images from the same camera" in out and "K cancels" in out
@@ -169,7 +169,7 @@ def test_measure_ptc_rejects_mixed_iso(tmp_path):
     _simulated_flat_fields(tmp_path / "flats", LEVELS[:3], iso=64)
     _simulated_flat_fields(tmp_path / "flats" / "z", LEVELS[:2], iso=320, seed=6)
     with pytest.raises(SystemExit):
-        nm.measure_ptc(tmp_path / "flats", WHITE, BLACK)
+        nm.measure_ptc(tmp_path / "flats", WHITE, BLACK_LEVEL)
 
 
 # ------------------------------------------------ real data (opt-in, see conftest.py)
@@ -187,7 +187,7 @@ def test_real_flat_fields_give_a_plausible_dynamic_range(real_flat_fields):
 # ------------------------------------------------ noise step: simulated, known answers
 
 def _flat_pair(S, size=256, prnu=0.01, shading=0.0, drift=0.0, ramp=0.0, seed=0):
-    """One pair of black-subtracted-free patches (black = 0) with known physics.
+    """One pair of patches with known physics, black level 0 (nothing to subtract).
     ramp: an extra light gradient in the second frame only (fractional change across x)."""
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[0:size, 0:size]
@@ -235,11 +235,11 @@ def test_plane_removal_does_not_bias_pure_noise():
 
 
 def test_difference_structure_tells_noise_uniform_gradient_and_blotches_apart():
-    noise = nm.difference_structure(*_flat_pair(2000.0, prnu=0.01, seed=3), black=0.0)
+    noise = nm.difference_structure(*_flat_pair(2000.0, prnu=0.01, seed=3), black_level=0.0)
     assert 0.8 < noise["R_plain"] < 1.25
-    uniform = nm.difference_structure(*_flat_pair(2000.0, drift=0.01, prnu=0.01, shading=0.1, seed=4), black=0.0)
+    uniform = nm.difference_structure(*_flat_pair(2000.0, drift=0.01, prnu=0.01, shading=0.1, seed=4), black_level=0.0)
     assert uniform["R_plain"] < 1.25                       # a uniform change barely shows
-    ramp = nm.difference_structure(*_flat_pair(2000.0, ramp=0.02, prnu=0.0, seed=5), black=0.0)
+    ramp = nm.difference_structure(*_flat_pair(2000.0, ramp=0.02, prnu=0.0, seed=5), black_level=0.0)
     assert ramp["R_plain"] > 1.5 and ramp["R_plane"] < 1.25
     gx, _ = ramp["gradient_dn"]
     assert gx * 255 == pytest.approx(-0.02 * 2000, rel=0.15)   # the 2% ramp, in DN
@@ -252,7 +252,7 @@ def test_difference_structure_tells_noise_uniform_gradient_and_blotches_apart():
 
 def test_single_frame_bias_recovers_the_pattern_and_steepens_the_slope(tmp_path):
     folder = _simulated_flat_fields(tmp_path / "flats", LEVELS, prnu=0.01)
-    result = nm.measure_ptc(folder, WHITE, BLACK)
+    result = nm.measure_ptc(folder, WHITE, BLACK_LEVEL)
     single = nm.single_frame_bias(result)
     assert single["p"] == pytest.approx(0.01, rel=0.2)
     assert single["K_ratio"] > 1.0
@@ -260,7 +260,7 @@ def test_single_frame_bias_recovers_the_pattern_and_steepens_the_slope(tmp_path)
 
 def test_vendor_noise_profile_converts_back_to_k_and_read_noise(tmp_path):
     """Build S = K / span and O = (K sigma_r / span)^2; the conversion must return K and sigma_r."""
-    span = WHITE - BLACK
+    span = WHITE - BLACK_LEVEL
     S, O = K_TRUE / span, (K_TRUE * READ_E_TRUE / span) ** 2
     path = write_dng(tmp_path / "np.dng", noise_profile=(S, O), exposure_s=0.01, iso=64)
     v = nm.vendor_noise_profile(path, K_TRUE, READ_E_TRUE)
@@ -275,7 +275,7 @@ def _simulated_dark_frames(folder, rate_e_s=20.0, exposures=(0.1, 0.25, 0.5, 1.0
     for t in exposures:
         for k in range(2):
             e = rng.poisson(rate_e_s * t, (320, 320))
-            raw = np.clip(np.rint(BLACK + K_TRUE * e + rng.normal(0, K_TRUE * READ_E_TRUE, (320, 320))), 0, WHITE)
+            raw = np.clip(np.rint(BLACK_LEVEL + K_TRUE * e + rng.normal(0, K_TRUE * READ_E_TRUE, (320, 320))), 0, WHITE)
             write_dng(folder / f"D_{t:05.2f}_{k}.dng", raw_data=raw.astype(np.uint16),
                       crop=(320, 320), exposure_s=t, iso=64)
     return folder
@@ -284,7 +284,7 @@ def _simulated_dark_frames(folder, rate_e_s=20.0, exposures=(0.1, 0.25, 0.5, 1.0
 def test_dark_current_and_zero_exposure_black(tmp_path, capsys):
     dark = nm.measure_dark_current(_simulated_dark_frames(tmp_path / "dark"), K_TRUE, 0.001)
     assert abs(dark["rate_e_s"] - 20.0) < 4 * dark["sd_rate_e_s"]
-    assert dark["black_measured_dn"] == pytest.approx(BLACK, abs=0.05)   # intercept, not the 1/10 s mean
+    assert dark["black_level_measured_dn"] == pytest.approx(BLACK_LEVEL, abs=0.05)   # intercept, not the 1/10 s mean
     assert "all images from the same camera" in capsys.readouterr().out
 
 
@@ -293,8 +293,8 @@ def test_report_noise_end_to_end_with_a_gradient_change(tmp_path):
     70% of the span: the plain pair fit's K is pulled up; the plane-removed fit recovers
     the true K. Writes every figure and valid results.json entries."""
     folder = _simulated_flat_fields(tmp_path / "flats", LEVELS, prnu=0.01, shading=0.05, ramp=0.02,
-                                    noise_profile=(K_TRUE / (WHITE - BLACK), (K_TRUE * READ_E_TRUE / (WHITE - BLACK)) ** 2))
-    result = nm.measure_ptc(folder, WHITE, BLACK, cutoff=0.7, method="plane-removed")
+                                    noise_profile=(K_TRUE / (WHITE - BLACK_LEVEL), (K_TRUE * READ_E_TRUE / (WHITE - BLACK_LEVEL)) ** 2))
+    result = nm.measure_ptc(folder, WHITE, BLACK_LEVEL, cutoff=0.7, method="plane-removed")
     plain, plane = result["fits"]["pair difference"], result["fits"]["plane-removed"]
     assert abs(plane["K"] - K_TRUE) < 4 * plane["sK"]
     assert plain["K"] > plane["K"] + 4 * plane["sK"]
@@ -439,7 +439,7 @@ def _dark_frames_filtered(folder, where=None, iso=64, n_exposures=4, per_exposur
                 for r in (0, 1):
                     for c in (0, 1):
                         noise[r::2, c::2] = _sharpen(noise[r::2, c::2].copy())
-            raw = np.clip(np.rint(BLACK + 50 + noise), 0, WHITE).astype(np.uint16)
+            raw = np.clip(np.rint(BLACK_LEVEL + 50 + noise), 0, WHITE).astype(np.uint16)
             write_dng(folder / f"D_{i}_{k}.dng", raw_data=raw, crop=(size, size), exposure_s=t, iso=iso)
     return folder
 
@@ -468,7 +468,7 @@ def test_full_mosaic_sharpening_barely_shows_in_one_green_plane(tmp_path):
 
 def test_dark_current_is_skipped_when_iso_differs(tmp_path, capsys):
     folder = _simulated_flat_fields(tmp_path / "flats", LEVELS)
-    result = nm.measure_ptc(folder, WHITE, BLACK)
+    result = nm.measure_ptc(folder, WHITE, BLACK_LEVEL)
     dark = _dark_frames_filtered(tmp_path / "dark", iso=320)
     summary = nm.report_noise(result, tmp_path / "out", dark_folder=dark)
     assert summary["dark"] is None
@@ -481,3 +481,61 @@ def test_dark_current_is_skipped_when_iso_differs(tmp_path, capsys):
 def test_remove_plane_removes_an_exact_plane():
     yy, xx = np.mgrid[0:32, 0:32]
     assert np.abs(nm.remove_plane(3 + 0.2 * xx - 0.1 * yy)).max() < 1e-9
+
+
+
+# ------------------------------------------------ measured black level
+
+TRUE_BLACK_LEVEL_OFFSET = -0.5            # sensor black level 0.5 DN below the declared one (as on the iPhone)
+
+
+def _offset_dark_frames(folder, offset=TRUE_BLACK_LEVEL_OFFSET, seed=21):
+    rng = np.random.default_rng(seed)
+    folder.mkdir(parents=True, exist_ok=True)
+    for t in (0.01, 0.1, 0.5, 1.0):
+        for k in range(3):
+            e = rng.poisson(5.0 * t, (320, 320))
+            raw = np.rint(BLACK_LEVEL + offset + K_TRUE * e + rng.normal(0, K_TRUE * READ_E_TRUE, (320, 320)))
+            write_dng(folder / f"D_{t:05.2f}_{k}.dng", raw_data=np.clip(raw, 0, WHITE).astype(np.uint16),
+                      crop=(320, 320), exposure_s=t, iso=64)
+    return folder
+
+
+def test_measure_black_level_finds_the_true_offset(tmp_path):
+    bm = nm.measure_black_level(_offset_dark_frames(tmp_path / "dark"))
+    assert bm["declared"] == BLACK_LEVEL
+    assert bm["mean"] == pytest.approx(BLACK_LEVEL + TRUE_BLACK_LEVEL_OFFSET, abs=0.05)
+    assert bm["sd"] < 0.05 and set(bm["channels"]) == {"R", "B", "G avg"} and bm["iso"] == 64
+
+
+def test_declared_black_biases_the_intercept_by_k_times_the_offset(tmp_path):
+    """Flats from a sensor whose black level is 0.5 DN below the declared value: the fit
+    above the true black level recovers sigma_r; the fit above the declared one has c too high by
+    about K x 0.5 and reads a higher read noise. (Rounding to whole DN adds 1/12 DN^2.)"""
+    rng = np.random.default_rng(5)
+    folder = tmp_path / "flats"; folder.mkdir()
+    for i, level in enumerate(LEVELS):
+        for frame in (0, 1):
+            e = rng.poisson(level / K_TRUE, (320, 320))
+            raw = np.rint(BLACK_LEVEL + TRUE_BLACK_LEVEL_OFFSET + K_TRUE * e + rng.normal(0, K_TRUE * READ_E_TRUE, (320, 320)))
+            write_dng(folder / f"IMG_{i:02d}_{frame}.dng", raw_data=np.clip(raw, 0, WHITE).astype(np.uint16),
+                      crop=(320, 320), exposure_s=(i + 1) / 1000, iso=64)
+    result = nm.measure_ptc(folder, WHITE, BLACK_LEVEL + TRUE_BLACK_LEVEL_OFFSET)
+    true_read = np.sqrt((K_TRUE * READ_E_TRUE) ** 2 + 1 / 12) / K_TRUE
+    used, declared = result["fit"], result["fit_declared"]
+    assert abs(used["read"] - true_read) < 4 * used["s_read"]
+    assert declared["c"] - used["c"] == pytest.approx(K_TRUE * abs(TRUE_BLACK_LEVEL_OFFSET), abs=0.05)
+    assert declared["read"] > used["read"]
+
+
+def test_black_level_comparison_plot_and_results_entry(tmp_path):
+    folder = _simulated_flat_fields(tmp_path / "flats", LEVELS)
+    result = nm.measure_ptc(folder, WHITE, BLACK_LEVEL - 0.5)
+    result["black_level_measurement"] = nm.measure_black_level(_offset_dark_frames(tmp_path / "dark"))
+    summary = nm.report_noise(result, tmp_path / "out", black_level_plot=True)
+    assert (tmp_path / "out" / "noise_ptc_black_level_comparison.png").exists()
+    entries = nm.noise_results_entries(summary)
+    assert entries["black_level_dn"][0] == pytest.approx(BLACK_LEVEL - 0.5, abs=0.05)
+    results, template = res.load()
+    results.update(entries)
+    assert res.validate(results, template) == []
