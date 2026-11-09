@@ -1,0 +1,102 @@
+uv run project1.py --geometry --no-results --expected-lens "iPhone 16 Pro Max back camera 2.22mm f/2.2"
+
+=================== geometry ===================
+lens_id assertion (Prof. McNames, Project 1 page) over 63 calibration files:
+all images from the same camera: ('iPhone 16 Pro Max back camera 2.22mm f/2.2', 2.22, 14, (256, 144))
+Camera identity (63 files agree)
+  file                 APC_0539.dng
+  lens_model           iPhone 16 Pro Max back camera 2.22mm f/2.2
+  focal_length_mm      2.22
+  focal_length_35mm    14
+  make                 Apple
+  model                iPhone 16 Pro Max
+  software             Adobe Lightroom 11.6.21 (iOS)
+  cfa_pattern          RGGB
+  raw_ifd_where        IFD0>SubIFD
+  size_rawpy_visible   (4032, 3024)
+  size_raw_ifd         (4224, 3024)
+  size_default_crop    (4032, 3024)
+  active_area          (0, 96, 3024, 4128)
+  NOTE: image size depends on the source: rawpy_visible 4032x3024, default_crop 4032x3024, raw_ifd 4224x3024
+  no full (9, 6) grid in APC_0590.dng; not used
+  no full (9, 6) grid in APC_0591.dng; not used
+  no full (9, 6) grid in APC_0594.dng; not used
+  no full (9, 6) grid in APC_0595.dng; not used
+  no full (9, 6) grid in APC_0596.dng; not used
+  no full (9, 6) grid in APC_0597.dng; not used
+  no full (9, 6) grid in APC_0598.dng; not used
+  no full (9, 6) grid in APC_0599.dng; not used
+  no full (9, 6) grid in APC_0600.dng; not used
+  no full (9, 6) grid in APC_0601.dng; not used
+53 of 63 captures gave a full (9, 6) grid; raw frame size 4032 x 3024
+
+RMS reprojection error  0.9740 px over 53 views
+  fx    1508.30689 +/- 5.99845
+  fy    1484.56077 +/- 6.35904
+  cx    1894.92127 +/- 6.51429
+  cy    1517.97936 +/- 3.12080
+  k1      -0.02303 +/- 0.00156
+  k2      -0.00193 +/- 0.00044
+  p1       0.00027 +/- 0.00051
+  p2      -0.01219 +/- 0.00066
+  k3       0.00000 +/- 0.00000
+  principal point vs frame center (2015.5, 1511.5): (-120.6, +6.5) px
+  f_y - f_x = -23.75 px (f_y/f_x = 0.98426; square pixels give 0); its sd lies between 0.36 (f_x, f_y fully correlated) and 8.74 px (independent)
+  view 7 APC_0545.dng: edge transition 3.17 px > 3.0 (soft)
+  view 8 APC_0546.dng: edge transition 3.15 px > 3.0 (soft)
+  view 9 APC_0547.dng: edge transition 3.10 px > 3.0 (soft)
+  view 11 APC_0549.dng: edge transition 3.06 px > 3.0 (soft)
+  view 12 APC_0550.dng: edge transition 3.03 px > 3.0 (soft)
+  view 13 APC_0551.dng: edge transition 3.18 px > 3.0 (soft)
+  view 14 APC_0552.dng: edge transition 3.26 px > 3.0 (soft)
+  view 15 APC_0553.dng: edge transition 3.15 px > 3.0 (soft)
+  view 16 APC_0554.dng: edge transition 3.11 px > 3.0 (soft)
+  view 17 APC_0555.dng: edge transition 3.12 px > 3.0 (soft)
+  view 19 APC_0557.dng: edge transition 3.29 px > 3.0 (soft)
+  view 20 APC_0558.dng: edge transition 3.38 px > 3.0 (soft)
+  view 21 APC_0559.dng: edge transition 3.46 px > 3.0 (soft)
+  view 22 APC_0560.dng: edge transition 3.35 px > 3.0 (soft)
+  view 23 APC_0561.dng: edge transition 3.19 px > 3.0 (soft)
+  view 24 APC_0562.dng: edge transition 3.43 px > 3.0 (soft)
+  view 25 APC_0563.dng: edge transition 3.16 px > 3.0 (soft)
+  view 26 APC_0564.dng: edge transition 3.10 px > 3.0 (soft)
+  view 27 APC_0565.dng: edge transition 3.64 px > 3.0 (soft)
+  view 28 APC_0566.dng: edge transition 4.59 px > 3.0 (soft)
+  view 29 APC_0567.dng: edge transition 3.07 px > 3.0 (soft)
+  view 30 APC_0568.dng: edge transition 3.03 px > 3.0 (soft)
+  view 31 APC_0569.dng: RMS 1.510 px > 1.5; edge transition 5.10 px > 3.0 (soft)
+  view 32 APC_0570.dng: RMS 1.537 px > 1.5; edge transition 4.74 px > 3.0 (soft)
+  view 33 APC_0571.dng: edge transition 3.15 px > 3.0 (soft)
+  view 34 APC_0572.dng: edge transition 3.14 px > 3.0 (soft)
+  view 35 APC_0573.dng: edge transition 3.13 px > 3.0 (soft)
+  view 38 APC_0576.dng: edge transition 3.27 px > 3.0 (soft)
+  view 39 APC_0577.dng: edge transition 3.86 px > 3.0 (soft)
+  view 44 APC_0582.dng: RMS 1.707 px > 1.5; edge transition 5.38 px > 3.0 (soft)
+  view 45 APC_0583.dng: RMS 1.716 px > 1.5; edge transition 5.57 px > 3.0 (soft)
+  view 46 APC_0584.dng: RMS 1.600 px > 1.5; edge transition 4.78 px > 3.0 (soft)
+  view 47 APC_0585.dng: RMS 1.601 px > 1.5; edge transition 5.85 px > 3.0 (soft)
+  view 48 APC_0586.dng: RMS 1.646 px > 1.5; edge transition 5.21 px > 3.0 (soft)
+  view 49 APC_0587.dng: RMS 1.624 px > 1.5; edge transition 4.87 px > 3.0 (soft)
+  view 52 APC_0592.dng: edge transition 3.80 px > 3.0 (soft)
+  view 53 APC_0593.dng: edge transition 3.91 px > 3.0 (soft)
+  edge transition width (estimateChessboardSharpness): median 3.15 px, worst 5.85 px
+  transition width vs per-view RMS: Spearman rho = +0.44, no strong link between blur and error
+
+EXIF route (geometry_from_exif): 2.220000028611935 mm, 14 mm equivalent, 4032 x 3024 frame -> pitch 1.3613 um +/- 2.06% (35 mm rounding, half-width 3.6%)
+  published pitch 2.44 um (GSMArena, 9to5Mac): EXIF route differs by -44.21%
+  mean f = 1496.43 +/- 6.18 px (fully correlated bound) vs EXIF-predicted 1630.8 px: -8.24% (calibration sees the lens-to-sensor distance at the focus distance)
+  focal length 2.0371 +/- 0.0428 mm vs EXIF FocalLength 2.220000028611935 mm
+  largest single-corner residual: view 45 (APC_0583.dng) at [ 3605.8  2356.5], 5.44 px
+
+Implied radial distortion: -10.33% at 1915 px (outermost calibrated corner), -26.14% at 2621 px (frame corner, extrapolated beyond the data)
+  WARNING: more than 5.0% implied; a phone's main camera has a few percent at most. Suspect the fit (unstable k2/k3, or no views near the corners).
+  undistort figure from APC_0583.dng: edge deviation max/RMS 2.24/1.70 px as captured, 1.96/1.49 px undistorted
+
+RMS reprojection error 0.9740 +/- 0.0607 px (jackknife over 53 views; leave-one-out RMS 0.9537 to 0.9819)
+Binning check: output pitch / photodiode pitch = 1.12 (2 if 2x2 binned), sensor pixels / output pixels = 3.94 (4 if binned) -> NOT binned  WARNING: the two tests disagree (a different camera?)
+
+focal_length_mm uses the EXIF-route pitch 1.3613 um (camera_specs.pitch_um 2.434 is kept for the homework scripts)
+
+--no-results: results.json not written
+results.json: 33 of 34 entries complete (97%), 1 still open:
+  black_level_dn: value 528.0 has no uncertainty yet
