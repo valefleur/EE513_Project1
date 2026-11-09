@@ -250,3 +250,37 @@ def test_qualifying_series_that_agree_closely_keep_the_within_series_sd():
                  "b_501mm": {"top right": s(0.401, 0.020, 0.70)}}
     tr = mtf.datasheet_values(summaries, "center_501mm")["corners"]["top right"]
     assert tr["sd_sys"] < 0.001 and tr["sd"] == pytest.approx(0.020)
+
+
+
+def test_threshold_sweep_finds_the_target_when_one_threshold_misses_it():
+    """The principle behind the sweep. On Sun Nov 8 (APC_0658, outdoors, frame mostly dark
+    foreground and foliage) the single automatic threshold fell below the squares'
+    level, so they counted as bright and nothing was found; the sweep found all five.
+    Here: a threshold far below the paper-to-ink gap finds nothing, one inside the gap
+    finds all five, and the sweep lands inside the gap on its own."""
+    import cv2 as cv
+    plane = (render_target(psf_sigma_px=1.5) * 3000.0)[0::2, 1::2]
+    L = np.log(np.maximum(plane, 1.0)); lo, hi = np.percentile(L, 1), np.percentile(L, 99.5)
+    u8 = cv.GaussianBlur(np.clip((L - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8), (5, 5), 0)
+    ink, paper = np.median(u8[u8 < 60]), np.median(u8[u8 > 200])
+    assert mtf._squares_at_threshold(u8, int(ink) - 5) == {}                     # below the gap
+    assert set(mtf._squares_at_threshold(u8, int((ink + paper) / 2))) == set(mtf.REGIONS)
+    assert set(mtf.find_squares(plane)) == set(mtf.REGIONS)
+
+
+def test_a_uniform_frame_has_no_squares_and_no_warning():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert mtf.find_squares(np.full((600, 800), 500.0)) == {}
+
+
+def test_a_frame_without_the_target_is_named(tmp_path, capsys):
+    from tests.synthetic_dng import write_dng
+    folder = tmp_path / "s" / "center_x"
+    write_target_dngs(folder, n=2)
+    write_dng(folder / "IMG_99.dng", raw_data=np.full((1200, 1600), 600, np.uint16), crop=(1600, 1200),
+              exposure_s=1 / 125, iso=64)
+    mtf.measure_mtf(tmp_path / "s", tmp_path / "o")
+    assert "IMG_99.dng: no target squares found" in capsys.readouterr().out

@@ -78,43 +78,30 @@ def green_plane(path):
     return plane - black_level, white_level - black_level
 
 
-def find_squares(plane):
-    """The target's dark squares: the center square and the farthest square per quadrant.
+def _squares_at_threshold(img, threshold):
+    """Target squares in an 8-bit (log-scaled) image, with dark = below threshold.
 
-    The threshold works on the log of the image. Lighting is multiplicative: the paper
-    can be 2-3x dimmer on one side of the sheet (light falloff, a clip's shadow), and on
-    a real capture a single linear threshold then classes the dim paper as dark, merging
-    the squares there with the background (APC_0500, Sat Nov 7: both left squares
-    lost). Ink contrast is multiplicative too (black about 14x below paper). In log
-    units the lighting gradient becomes a small additive shift (log 2.5 ~ 0.9) while the
-    paper-to-ink gap stays large (log 14 ~ 2.6), so one threshold separates them
-    everywhere.
-
-    Threshold (Otsu, on the log image) for dark blobs; keep outer boundaries only (RETR_CCOMP, no parent,
-    so a dark table around the white sheet cannot contribute its inner outline); keep
-    blobs that are square (aspect 0.85-1.18, fill > 0.9 of their rotated bounding box)
-    and do not touch the frame edge. The largest is the center square; in each quadrant
-    around it, the farthest blob of 0.1-0.4 of its area is that corner's square
-    (45 mm / 100 mm squares give about 0.2).
+    Keeps outer boundaries only (RETR_CCOMP, no parent, so a dark surround cannot
+    contribute its inner outline) of blobs that are square (aspect 0.85-1.18, fill > 0.9
+    of their rotated bounding box), large enough, and not touching the frame edge. The
+    largest is the center square; in each quadrant around it, the farthest blob of
+    0.1-0.4 of its area is that corner's square (45 mm / 100 mm squares give about 0.2).
 
     Parameters
     ----------
-    plane : ndarray
-        Linear green plane.
+    img : ndarray, uint8
+    threshold : int
+        Pixels below this are dark.
 
     Returns
     -------
     dict
-        {region name: dict(contour (N x 2 points), area, box (x, y, w, h), center)},
-        only for the regions found.
+        {region name: dict(contour, area, box (x, y, w, h), center)} for regions found.
     """
-    L = np.log(np.maximum(plane, 1.0))                      # lighting becomes additive
-    lo, hi = np.percentile(L, 1), np.percentile(L, 99.5)
-    img = cv.GaussianBlur(np.clip((L - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8), (5, 5), 0)
-    _, dark = cv.threshold(img, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)
+    dark = ((img < threshold) * 255).astype(np.uint8)
     dark = cv.morphologyEx(dark, cv.MORPH_OPEN, np.ones((5, 5), np.uint8))
     contours, hierarchy = cv.findContours(dark, cv.RETR_CCOMP, cv.CHAIN_APPROX_NONE)
-    h, w = plane.shape
+    h, w = img.shape
     squares = []
     for cnt, (_, _, _, parent) in zip(contours, hierarchy[0] if hierarchy is not None else []):
         if parent != -1:
@@ -138,6 +125,60 @@ def find_squares(plane):
         if cands:
             found[name] = max(cands, key=lambda s: np.hypot(s["center"][0] - mx, s["center"][1] - my))
     return found
+
+
+def find_squares(plane, thresholds=range(20, 240, 10)):
+    """The target's dark squares: the center square and the farthest square per quadrant.
+
+    Two problems shape the method, both met on real captures.
+
+    1. Lighting is multiplicative: the paper can be 2-3x dimmer on one side of the sheet
+       (light falloff, a clip's shadow), and a linear threshold then classes the dim paper
+       as dark, merging the squares with the background (APC_0500, Sat Nov 7). Ink
+       contrast is multiplicative too (black about 14x below paper). So the threshold
+       works on the log of the image, where the lighting gradient becomes a small
+       additive shift (log 2.5 ~ 0.9) and the paper-to-ink gap stays large (log 14 ~ 2.6).
+
+    2. The scene around the target varies. Outdoors with dark foreground and foliage
+       (APC_0658 and APC_0677, Sun Nov 8), a single automatic (Otsu) threshold lands
+       between the dark scene and the gray board, so the squares, dark only relative to
+       the paper, end up on the bright side and nothing is found. Measured there: paper
+       1741 DN, squares 123, board 206, foreground 9. Any threshold inside the
+       paper-to-ink gap isolates every square, because the paper surrounds each one,
+       whatever the rest of the scene does.
+
+    So the log image is scaled to 8 bits and a range of thresholds is tried
+    (_squares_at_threshold). Each result is scored by whether it found a center square
+    and then by how many corner squares it found (a real target gives a center and up
+    to four corners of the right relative size, arranged one per quadrant, which a
+    stray square-ish shadow does not). Among the thresholds with the best score, the
+    middle one is used: the most robust choice inside the working range.
+
+    Parameters
+    ----------
+    plane : ndarray
+        Linear green plane.
+    thresholds : iterable of int, default range(20, 240, 10)
+        Thresholds to try on the 8-bit log image.
+
+    Returns
+    -------
+    dict
+        {region name: dict(contour (N x 2 points), area, box (x, y, w, h), center)},
+        only for the regions found; empty if no threshold found a center square.
+    """
+    L = np.log(np.maximum(plane, 1.0))                      # lighting becomes additive
+    lo, hi = np.percentile(L, 1), np.percentile(L, 99.5)
+    if hi - lo < 1e-6:                                      # a uniform frame has no target
+        return {}
+    img = cv.GaussianBlur(np.clip((L - lo) / (hi - lo) * 255, 0, 255).astype(np.uint8), (5, 5), 0)
+    results = [(t, _squares_at_threshold(img, t)) for t in thresholds]
+    score = lambda found: (("center" in found), len(found))
+    best = max(score(f) for _, f in results)
+    if not best[0]:
+        return {}
+    tied = [f for _, f in results if score(f) == best]
+    return tied[len(tied) // 2]
 
 
 def edge_side(region, square, shape, direction):
@@ -605,7 +646,11 @@ def plot_series(name, frames, out_png):
     ax.set_xlim(0, 1); ax.set_ylim(0, 1.1)
     ax.set_xlabel("cycles per green-plane sample (green Nyquist 0.5)"); ax.set_ylabel("MTF")
     ax.set_title(f"Series {name}: mean MTF per region (solid vertical edge, dashed horizontal)", fontsize=10)
-    ax.legend(fontsize=7, ncol=2)
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize=7, ncol=2)
+    else:
+        ax.text(0.5, 0.5, "no edges measured in this series", ha="center", va="center",
+                transform=ax.transAxes)
     fig.tight_layout()
     out_png = Path(out_png); out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=120); plt.close(fig)
@@ -663,6 +708,9 @@ def measure_mtf(folder, output_dir, center_series=None, datasheet_pattern=None, 
             plane, span = green_plane(p)
             rows = analyze_frame(plane, span)
             frames.append(rows)
+            if not rows:
+                print(f"  {p.name}: no target squares found, frame not used (is the whole sheet in "
+                      "frame, with paper around every square?)")
             table += [dict(series=name, file=p.name, **{k: r[k] for k in
                            ("region", "direction", "side", "mtf50", "slant_deg", "drift_px", "reliable",
                             "radius", "peak", "paper_level")})
