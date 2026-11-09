@@ -2,6 +2,7 @@
 import os
 
 import numpy as np
+import pandas as pd
 import psu_imaging as psu
 import my_library.analyze as analyze
 import my_library.image_metadata as img
@@ -33,7 +34,6 @@ if __name__ == "__main__":
     output_path = 'output/hw3/'
 
     if LOW_ISO:
-        # image_path = iso64_path
         image_path = iso64_sunset
         iso = 64
     else:
@@ -42,7 +42,9 @@ if __name__ == "__main__":
 
 
     if not SPEED_UP:
-        rows = img.print_raw_metadata(image_path)
+        columns = ["exposure time", "ISO", "black level", "camera"]
+        df = pd.DataFrame(columns=columns)
+        rows = img.print_raw_metadata(image_path, df)
         print(f"First row: {rows[0]}")
         file_names = []
         exposure_times = []

@@ -34,7 +34,7 @@ EXPECTED_LENS = "iPhone 16 Pro Max back camera 6.765mm f/1.78"
 CALIBRATION_SUBDIR = "hw1/EXP125th"      # under --images; override with --calibration-images
 FLAT_FIELD_SUBDIR = "ISO64_Sunset"       # under --images; the HW3 ISO 64 pairs
 DARK_SUBDIR = "ISO64_Dark"               # under --images; the HW3 lens-capped frames
-SLANTED_SUBDIR = "hw2_slanted/Nov_07"    # under --images; one subfolder per series (target position)
+SLANTED_SUBDIR = "hw2_slanted/Nov_08/set3"    # under --images; one subfolder per series (target position)
 MTF_DATASHEET_SERIES = "*_501mm"         # datasheet center and corners from one distance (print-limited at 250 mm)
 MTF_TWO_DISTANCE = ("center_250mm", "center_501mm")   # print-vs-camera test; skipped if either is missing
 

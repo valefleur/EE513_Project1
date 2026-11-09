@@ -12,6 +12,7 @@ import my_library.linear_light as ll
 from my_library.camera_specs import IPHONE_16_PRO_MAX as cam_spec
 
 if __name__ == "__main__":
+    mtf.print_diffraction_summary()      # printed at import time before; same output
     print(f"iPhone 16 Pro Max:")
     cam = 'iphone'
 
@@ -26,6 +27,8 @@ if __name__ == "__main__":
     slanted_path = f'{camera_path}{lightroom}hw2_slanted/'
     good_slanted_dir = f'{slanted_path}good_lighting/'
     bad_slanted_dir  = f'{slanted_path}bad_lighting/'
+
+    todays_pics = f'{slanted_path}/Nov06/ISO_200/'
 
     output = 'output/hw2/'
     if TEST:
@@ -132,7 +135,7 @@ if __name__ == "__main__":
         # Problem 10
         problem_num = "10"
         print(f"\n**** Problem {problem_num} ****")
-        freq, gen_mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(generated_slanted_edge)
+        freq, gen_mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(generated_slanted_edge, verbose=True)
 
         fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
 
@@ -171,7 +174,7 @@ if __name__ == "__main__":
         print(f"Analytic MTF50 from Gaussian PSF with sigma = {sigma}: {analytic_mtf50:.4f} cycles per pixel") # are these green plane pixels?
         print(f"Percent error: {percent_error:.2f}%")
 
-    raw_slant_paths = analyze._list_raw_files(good_slanted_dir)
+    raw_slant_paths = analyze._list_raw_files(todays_pics)
 
     if not SPEED_UP:
         # Problem 12
@@ -232,7 +235,7 @@ if __name__ == "__main__":
                     plt.show()
                 fig.savefig(f"{output}/15_central_square_edge_of_{basename}.png")
                 plt.close(fig)
-            freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(central_square, real_data=True)
+            freq, mtf_curve, esf_x, esf, lsf, fitted, slope, intercept = mtf.slanted_edge_mtf(central_square, verbose=True)
             mtf50_in_pixels = mtf.mtf50(freq, mtf_curve) # this is already in cycles per green-plane pixel
             # print the mtf50 in um and cycles per green-plane pixel
             mtf50_in_um = mtf50_in_pixels / (2 * cam_spec.pitch_um) # divide by 2 because we are using the green-plane, and multiply by pixel pitch in um to get cycles per um

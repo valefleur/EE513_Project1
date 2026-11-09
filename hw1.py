@@ -18,6 +18,7 @@ if __name__ == "__main__":
     not_lr_calib_path = f'{iphone_path}{not_lr}iphone16_calibration/'
     lr_calib_path = f'{iphone_path}{lightroom}hw1/hw1_checkerboard2/'
     exp125th_calib_path = f'{iphone_path}{lightroom}hw1/EXP125th/'
+    nov_07_calib_path = f'{iphone_path}{lightroom}hw1/Nov_07/'
 
     iphone = f'{iphone_path}Terry.DNG'
     iphone_ordinary = f'{iphone_path}RAW_and_HEIC/IMG_6980.HEIC'
@@ -47,7 +48,7 @@ if __name__ == "__main__":
     # iphone_raw_img, iphone_raw_name = analyze._open_image(f'{iphone_both}.DNG')
     # iphone_heic_img, iphone_heic_name = analyze._open_image(f'{iphone_both}.HEIC')
     # analyze.zoomed_way_in(iphone_raw_img, iphone_heic_img, iphone_raw_name, camera=cam)
-    analyze.calibrate_camera(exp125th_calib_path, camera=cam)
+    analyze.calibrate_camera(nov_07_calib_path, camera=cam)
     # analyze.calibrate_camera('images/iPhone16/test/', camera=cam)
 
     # analyze.generate_side_by_side(f'{iphone_both}.DNG', f'{iphone_both}.HEIC')
