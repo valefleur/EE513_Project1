@@ -79,10 +79,10 @@
   "white_level_dn": 4095,
   "vendor_noiseprofile_present": true,
   "dynamic_range_stops": [
-    10.9,
+    10.93,
     0.01
   ],
-  "dynamic_range_criterion": "DR = log2(S_max / S_min) with S_max = white level - black level and S_min = the read noise (the signal equal to the noise floor, i.e. SNR = 1 counting read noise only); read noise from the intercept of a pair-difference photon transfer fit below 10% of the span. Equivalently 65.6 dB as 20 log10(S_max / S_min). The exact SNR = 1 point, which includes the signal's own shot noise, gives 10.80 stops.",
+  "dynamic_range_criterion": "DR = log2(S_max / S_min) with S_max = white level - black level and S_min = the read noise (the signal equal to the noise floor, i.e. SNR = 1 counting read noise only); read noise from the intercept of a pair-difference photon transfer fit below 10% of the span. Equivalently 65.8 dB as 20 log10(S_max / S_min). The exact SNR = 1 point, which includes the signal's own shot noise, gives 10.83 stops.",
   "delta_e_metric": "CIEDE2000",
   "colorchecker_reference_set": "ColorChecker24 - After November 2014",
   "delta_e_mean_before_ccm": [

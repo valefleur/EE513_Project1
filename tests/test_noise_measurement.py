@@ -158,6 +158,8 @@ def test_measure_ptc_recovers_the_simulated_sensor(tmp_path, capsys):
     summary = nm.report_dynamic_range(result)
     dr_true = np.log2((WHITE - BLACK_LEVEL) / np.sqrt(c_true))
     assert abs(summary["dr"] - dr_true) < 4 * summary["sd_dr"]
+    with open("dr_output.txt", "w") as f:
+        f.write(f"True DR: {dr_true:.2f} stops, measured DR: {summary['dr']:.2f} ± {summary['sd_dr']:.2f} stops\n")
     out = capsys.readouterr().out
     assert "all images from the same camera" in out and "K cancels" in out
     results, template = res.load()
