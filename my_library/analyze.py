@@ -27,7 +27,7 @@ COLORS = {'Red': '#D7263D', 'Grn1': '#00A676', 'Grn2': '#197738', 'Blue': '#003B
 def _is_raw(path_to_image):
     MY_CAMERAS = ['.arw', '.dng'] # Sony a7s ii and iPhone 16 RAW formats
     RAW = [".cr2", ".cr3", ".nef", ".raf", ".orf", ".rw2", ".pef", ".srw"] + MY_CAMERAS
-    assert os.path.isfile(path_to_image), "ERROR: Path to image required."
+    assert os.path.isfile(path_to_image), f"ERROR: Path to image required. Got: {path_to_image}"
 
     return (os.path.splitext(path_to_image)[1].lower() in RAW)
 
@@ -47,13 +47,13 @@ def bayer_mosaic(path_to_raw):
         - white_level.
     '''
     assert os.path.isfile(path_to_raw), "ERROR: Path to RAW image required."
-    image = rawpy.imread(str(path_to_raw))
-    print(f"\traw_type: {image.raw_type}")
-    print(f"\traw_image_visible:\n\t\tshape: {image.raw_image_visible.shape}\n\t\tdtype: {image.raw_image_visible.dtype}")
-    print(f"\traw_pattern:\n{image.raw_pattern}")
-    print(f"\tcolor_desc: {image.color_desc}")
-    print(f"\tblack_level_per_channel: {image.black_level_per_channel}")
-    print(f"\twhite_level: {image.white_level}\n")
+    with rawpy.imread(str(path_to_raw)) as image:     # closed when this block ends
+        print(f"\traw_type: {image.raw_type}")
+        print(f"\traw_image_visible:\n\t\tshape: {image.raw_image_visible.shape}\n\t\tdtype: {image.raw_image_visible.dtype}")
+        print(f"\traw_pattern:\n{image.raw_pattern}")
+        print(f"\tcolor_desc: {image.color_desc}")
+        print(f"\tblack_level_per_channel: {image.black_level_per_channel}")
+        print(f"\twhite_level: {image.white_level}\n")
 
 def metadata(path_to_image, extras=False):
     ''' 6.
@@ -367,8 +367,9 @@ def _open_image(path):
     2. Create a Numpy array of the image data
     3. Convert to the BRG color space for OpenCV
 
-    path: The relative path to the image file to open, as a string.
-    Returns a handle to the OpenCV object with as little processing as possible and the file name.
+    path: The relative path to the image file to open, as a string or Path.
+    Returns (BGR numpy array, file name). The file is closed before returning: the array
+    is an independent copy, so nothing has to be closed by the caller.
     '''
     path = os.fspath(path)
     file_name = os.path.basename(path)
@@ -376,14 +377,16 @@ def _open_image(path):
     # print(f"\tOpening {file_name}")
 
     if _is_raw(path_to_image=path):
-        img = rawpy.imread(path)
-        rgb_img = img.postprocess(user_flip=0, no_auto_bright=True, use_camera_wb=True)
+        with rawpy.imread(path) as raw:                # LibRaw buffers freed at block end
+            rgb_img = raw.postprocess(user_flip=0, no_auto_bright=True, use_camera_wb=True)
     elif _is_heic(path_to_image=path):
-        img = pillow_heif.open_heif(path, convert_hdr_to_8bit=False, hdr_to_16bit=False)
-        rgb_img = np.asarray(img)
+        # HeifFile has no close() or context manager; copy the pixels out and drop it.
+        heif = pillow_heif.open_heif(path, convert_hdr_to_8bit=False, hdr_to_16bit=False)
+        rgb_img = np.array(heif)
+        del heif
     else:
-        img = Image.open(path)
-        rgb_img = np.asarray(img)
+        with Image.open(path) as pil:                  # file handle closed at block end
+            rgb_img = np.array(pil)
 
     bgr_img = cv.cvtColor(rgb_img, cv.COLOR_RGB2BGR)
     return bgr_img, file_name
@@ -470,19 +473,30 @@ def plot_residuals(real_points, image_points, rms, K, distortion, rvecs, tvecs, 
     res, pos = [], []
     for op, ip, rv, tv in zip(real_points, image_points, rvecs, tvecs):
         proj, _ = cv.projectPoints(op, rv, tv, K, distortion)
+        # Prof. McNames' notebook uses projected - detected (proj - ip) instead,
+        # so these arrows point the opposite way from his; magnitudes are identical.
         res.append(ip.reshape(-1, 2) - proj.reshape(-1, 2)) # Claude suggested this
-        # res.append(ip.reshape(-1, 2) - ip.reshape(-1, 2)) # McNames does this
+        # res.append(proj.reshape(-1, 2) - ip.reshape(-1, 2)) # McNames does this
         pos.append(ip.reshape(-1,2))
         # collect ip.reshape(-1, 2) and res, then plt.quiver(x, y, res_x, res_y) across all images
     res, pos = np.vstack(res), np.vstack(pos)
+
+    mag = np.linalg.norm(res, axis=1)
+    counts = [len(ip.reshape(-1, 2)) for ip in image_points]
+    worst = int(np.argmax(mag))
+    view = int(np.searchsorted(np.cumsum(counts), worst, side="right"))
+    print(f"worst corner: view {view + 1}, at {pos[worst].round(1)}, residual {res[worst].round(2)} px")
+
+    scale = 200
+
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4.2))
     a1.quiver(pos[:, 0], pos[:, 1], res[:, 0], res[:, 1],
             np.linalg.norm(res, axis=1), cmap="viridis",
-            angles="xy", scale_units="xy", scale=0.002, width=0.003)
+            angles="xy", scale_units="xy", scale=1/scale, width=0.003)
     a1.add_patch(Rectangle((0, 0), *shape, fill=False, ec="#213921", lw=1.2))
     a1.set_xlim(-200, shape[0] + 200); a1.set_ylim(shape[1] + 200, -200)
     a1.set_aspect("equal"); a1.grid(alpha=0)
-    a1.set_title("residuals by position, drawn 500x", fontsize=11)
+    a1.set_title(f"residuals by position, drawn {scale}x", fontsize=11)
     a1.xaxis.tick_top()
 
     a2.plot(np.arange(1, len(per_view) + 1), per_view.ravel(), "o-",
@@ -625,7 +639,7 @@ def calibrate_camera(path_to_raws, camera=None, oneoff=None, SHOW=False):
         if SHOW:
             cv.imshow(f'{name}', img_gray)
             cv.waitKey(2)
-        if 1:
+        if 0:
             ret, corners = cv.findChessboardCorners(img_gray, PATTERN_SIZE, cv.CALIB_CB_ADAPTIVE_THRESH + cv.CALIB_CB_NORMALIZE_IMAGE)
             if not ret:
                 print(f"No corners in {name}.  Removing it.")

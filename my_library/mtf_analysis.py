@@ -15,14 +15,17 @@ CUTOFF = 1.0 / (LAMBDA_UM * cam_spec.f_number)        # incoherent diffraction c
 NYQUIST = 1.0 / (2 * 2 * cam_spec.pitch_um)    # green-plane sensor Nyquist, cycles/um
 AIRY_UM = 1.22 * LAMBDA_UM * cam_spec.f_number        # radius of the first dark ring
 
-print(f"aperture diameter D     {D_MM:8.2f} mm")
-print(f"diffraction cutoff      {CUTOFF * 1000:8.0f} cycles/mm")
-print(f"sensor Nyquist          {NYQUIST * 1000:8.0f} cycles/mm")
-print(f"cutoff / Nyquist        {CUTOFF / NYQUIST:8.2f}")
-print(f"Airy radius             {AIRY_UM:8.2f} um  ({AIRY_UM / cam_spec.pitch_um:.2f} pixels)")
-print()
-print("The cutoff depends on wavelength and f-number ALONE. Not on focal length,")
-print("not on sensor size, not on pixel count.")
+def print_diffraction_summary():
+    """Print the diffraction numbers above (HW2 Part 2). These used to print at import
+    time, which made every module that imported this one print them too."""
+    print(f"aperture diameter D     {D_MM:8.2f} mm")
+    print(f"diffraction cutoff      {CUTOFF * 1000:8.0f} cycles/mm")
+    print(f"sensor Nyquist          {NYQUIST * 1000:8.0f} cycles/mm")
+    print(f"cutoff / Nyquist        {CUTOFF / NYQUIST:8.2f}")
+    print(f"Airy radius             {AIRY_UM:8.2f} um  ({AIRY_UM / cam_spec.pitch_um:.2f} pixels)")
+    print()
+    print("The cutoff depends on wavelength and f-number ALONE. Not on focal length,")
+    print("not on sensor size, not on pixel count.")
 
 
 def get_pixel_mtf(nu):
@@ -90,8 +93,36 @@ def edge_centroids(roi, window=8.0, smooth=1.5):
     return centers
 
 
-def slanted_edge_mtf(roi, bin_width=0.25, window=8.0, real_data=False):
-    """Returns (freq in cycles/px, mtf, esf_x, esf)."""
+def slanted_edge_mtf(roi, bin_width=0.25, window=8.0, esf_half_width=12.0, verbose=False):
+    """Slanted-edge MTF of one region with a near-vertical edge.
+
+    The ESF is always cropped to +/- esf_half_width px around the edge before the LSF is
+    taken, for synthetic and real data alike, so a known-answer test measures exactly the
+    method used on real captures. Measured on HW2's known-answer edge (5 deg tilt,
+    Gaussian PSF sigma 1.0 px, analytic MTF50 0.1874) with noise over 200 trials: no
+    crop scattered MTF50 by sd 0.097 (about 50%); +/-12 px gave -2.9% bias, sd 0.0021;
+    +/-16 px gave -4.0%, sd 0.0025 (more tail adds noise, not signal). The region given
+    must extend somewhat beyond the crop on both sides of the edge.
+
+    Parameters
+    ----------
+    roi : ndarray
+        Region with a near-vertical edge (rows run along the edge).
+    bin_width : float, default 0.25
+        ESF bin width in pixels (4x oversampling).
+    window : float, default 8.0
+        Half-width in pixels of the derivative window used to locate the edge per row.
+    esf_half_width : float, default 12.0
+        Keep the ESF within this many pixels of the fitted edge.
+    verbose : bool, default False
+        Print the fitted edge's slope and intercept (as HW2 did).
+
+    Returns
+    -------
+    tuple
+        (freq in cycles per pixel of roi, mtf normalized to 1 at zero frequency, esf_x,
+        esf, lsf, fitted edge position per row, slope in px/row, intercept).
+    """
     roi = np.asarray(roi, dtype=float)
     rows = np.arange(roi.shape[0])
 
@@ -99,7 +130,8 @@ def slanted_edge_mtf(roi, bin_width=0.25, window=8.0, real_data=False):
     ok = np.isfinite(centers)
     # print(f"centers: {centers[ok]}")
     slope, intercept = np.polyfit(rows[ok], centers[ok], 1)
-    print(f"slanted edge slope = {slope:.4f} px/row, intercept = {intercept:.2f} px")
+    if verbose:
+        print(f"slanted edge slope = {slope:.4f} px/row, intercept = {intercept:.2f} px")
     fitted = slope * rows + intercept
 
     cols = np.arange(roi.shape[1])
@@ -114,11 +146,10 @@ def slanted_edge_mtf(roi, bin_width=0.25, window=8.0, real_data=False):
     esf = total[keep] / count[keep]
     esf_x = (edges[:-1] + bin_width / 2)[keep]
 
-    if real_data:
-        # crop the ESF to the central +/-12px of the edge to avoid edge effects
-        crop = np.abs(esf_x) <= 12
-        esf_x = esf_x[crop]
-        esf = esf[crop]
+    # crop the ESF to the central +/-esf_half_width px of the edge to avoid edge effects
+    crop = np.abs(esf_x) <= esf_half_width
+    esf_x = esf_x[crop]
+    esf = esf[crop]
 
     lsf = np.gradient(esf, esf_x)
     lsf = lsf - np.median(np.concatenate([lsf[:5], lsf[-5:]]))
